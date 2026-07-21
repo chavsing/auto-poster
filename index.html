@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>AutoPost — Publish once, post everywhere</title>
+<style>
+  :root{
+    /* ---- surface + brand tokens ---- */
+    --bg:#08090f;
+    --surface:rgba(255,255,255,.045);
+    --surface-2:rgba(255,255,255,.07);
+    --stroke:rgba(255,255,255,.09);
+    --stroke-2:rgba(255,255,255,.17);
+    --text:#eef1f8;
+    --muted:#98a1b6;
+    --brand:#6d5efc;
+    --brand-2:#22d3ee;
+    --brand-3:#b06cf7;
+    --ok:#2ecc8f;
+    --err:#ff5f70;
+
+    /* ---- motion tokens (one rhythm everywhere) ---- */
+    --t-fast:140ms;
+    --t:220ms;
+    --t-slow:340ms;
+    --ease-out:cubic-bezier(.16,1,.3,1);
+    --ease-spring:cubic-bezier(.34,1.56,.64,1);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;overflow-x:hidden}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;min-height:100dvh;
+    position:relative;
+  }
+
+  /* ==========================================================
+     AMBIENT BACKGROUND — aurora + grid + noise + vignette
+     Purely decorative: aria-hidden, pointer-events:none,
+     transform/opacity only, killed under reduced-motion.
+     ========================================================== */
+  .bg{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+  .bg .blob{position:absolute;border-radius:50%;filter:blur(80px);opacity:.5;will-change:transform}
+  .bg .b1{
+    width:620px;height:620px;top:-220px;left:-140px;
+    background:radial-gradient(circle at 30% 30%, #6d5efc, transparent 68%);
+    animation:drift1 26s var(--ease-out) infinite alternate;
+  }
+  .bg .b2{
+    width:540px;height:540px;top:-120px;right:-160px;
+    background:radial-gradient(circle at 60% 40%, #22d3ee, transparent 66%);
+    opacity:.36;
+    animation:drift2 31s var(--ease-out) infinite alternate;
+  }
+  .bg .b3{
+    width:660px;height:660px;bottom:-320px;left:32%;
+    background:radial-gradient(circle at 50% 50%, #b06cf7, transparent 70%);
+    opacity:.3;
+    animation:drift3 36s var(--ease-out) infinite alternate;
+  }
+  @keyframes drift1{to{transform:translate3d(140px,90px,0) scale(1.18)}}
+  @keyframes drift2{to{transform:translate3d(-120px,140px,0) scale(1.12)}}
+  @keyframes drift3{to{transform:translate3d(90px,-110px,0) scale(1.2)}}
+
+  /* faint grid, faded out toward the edges */
+  .bg .grid{
+    position:absolute;inset:0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px);
+    background-size:56px 56px;
+    -webkit-mask-image:radial-gradient(ellipse 85% 62% at 50% 22%, #000 20%, transparent 78%);
+    mask-image:radial-gradient(ellipse 85% 62% at 50% 22%, #000 20%, transparent 78%);
+  }
+  /* film grain — stops the gradients from banding */
+  .bg .noise{
+    position:absolute;inset:-50%;opacity:.028;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .bg .vig{position:absolute;inset:0;background:radial-gradient(ellipse 78% 60% at 50% 0%, transparent 40%, rgba(4,5,10,.72) 100%)}
+
+  .wrap{max-width:940px;margin:0 auto;padding:34px 20px 72px;position:relative}
+
+  /* ---- staggered entrance ---- */
+  .rv{opacity:0;transform:translateY(16px);animation:rise .6s var(--ease-out) forwards;animation-delay:var(--d,0ms)}
+  @keyframes rise{to{opacity:1;transform:none}}
+
+  /* ---------- header ---------- */
+  .top{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:40px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.02em;font-size:15px}
+  .logo .mark{
+    width:34px;height:34px;border-radius:10px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--brand),var(--brand-2));
+    box-shadow:0 6px 22px rgba(109,94,252,.5);
+    animation:float 6s ease-in-out infinite;
+  }
+  @keyframes float{50%{transform:translateY(-3px)}}
+  .logo svg{width:18px;height:18px}
+  .ghost{
+    background:var(--surface);border:1px solid var(--stroke);color:var(--muted);
+    padding:10px 15px;min-height:44px;border-radius:11px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;
+    display:inline-flex;align-items:center;gap:7px;
+    transition:color var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
+  }
+  .ghost:hover{border-color:var(--stroke-2);color:var(--text);background:var(--surface-2)}
+  .ghost:active{transform:scale(.97)}
+
+  /* ---------- hero ---------- */
+  .hero{text-align:center;margin-bottom:36px}
+  .pill{
+    display:inline-flex;align-items:center;gap:9px;font-size:12px;font-weight:600;
+    color:#cdc8ff;background:rgba(109,94,252,.13);border:1px solid rgba(109,94,252,.34);
+    padding:7px 14px;border-radius:999px;margin-bottom:20px;
+    backdrop-filter:blur(8px);
+  }
+  .dot{position:relative;width:6px;height:6px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+  .dot::after{
+    content:"";position:absolute;inset:-4px;border-radius:50%;border:1.5px solid var(--ok);
+    animation:ping 2.4s var(--ease-out) infinite;
+  }
+  @keyframes ping{0%{transform:scale(.6);opacity:.9}70%,100%{transform:scale(1.9);opacity:0}}
+  h1{
+    font-size:clamp(32px,5.4vw,50px);line-height:1.06;margin:0 0 16px;
+    letter-spacing:-.038em;font-weight:750;
+  }
+  h1 .grad{
+    background:linear-gradient(100deg,var(--brand-2),var(--brand-3) 45%,var(--brand) 70%,var(--brand-2));
+    background-size:220% 100%;
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    animation:shimmer 9s linear infinite;
+  }
+  @keyframes shimmer{to{background-position:220% 0}}
+  .sub{color:var(--muted);font-size:16.5px;max-width:520px;margin:0 auto;line-height:1.6}
+
+  /* ---------- card ---------- */
+  .card{
+    position:relative;
+    background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.018));
+    border:1px solid var(--stroke);border-radius:24px;padding:30px;
+    backdrop-filter:blur(18px);
+    box-shadow:0 34px 80px -34px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.07);
+  }
+  /* light beam across the top edge */
+  .card::before{
+    content:"";position:absolute;top:-1px;left:12%;right:12%;height:1px;
+    background:linear-gradient(90deg,transparent,rgba(140,125,255,.9),rgba(34,211,238,.7),transparent);
+    opacity:.8;
+  }
+  @media(max-width:560px){.card{padding:22px;border-radius:20px}}
+
+  .field{margin-bottom:22px}
+  label.lab{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;font-weight:650;margin-bottom:9px}
+  .hint{color:var(--muted);font-weight:500;font-size:12px;font-variant-numeric:tabular-nums}
+
+  input[type=text],input[type=url],textarea,select{
+    width:100%;background:rgba(0,0,0,.3);border:1px solid var(--stroke);
+    border-radius:13px;color:var(--text);padding:13px 15px;min-height:48px;font:inherit;font-size:15px;outline:none;
+    transition:border-color var(--t) var(--ease-out),box-shadow var(--t) var(--ease-out),background var(--t) var(--ease-out);
+  }
+  input::placeholder,textarea::placeholder{color:#636d87}
+  input:focus,textarea:focus,select:focus{
+    border-color:var(--brand);
+    box-shadow:0 0 0 4px rgba(109,94,252,.16);
+    background:rgba(0,0,0,.42);
+  }
+  textarea{resize:vertical;min-height:132px;line-height:1.65}
+  select{cursor:pointer}
+  :focus-visible{outline:2px solid var(--brand-2);outline-offset:2px}
+
+  .inp-invalid{border-color:var(--err)!important;box-shadow:0 0 0 4px rgba(255,95,112,.14)!important;animation:shake .34s var(--ease-out)}
+  @keyframes shake{20%{transform:translateX(-5px)}45%{transform:translateX(4px)}70%{transform:translateX(-2px)}100%{transform:none}}
+  .err-msg{color:var(--err);font-size:12.5px;margin-top:7px;display:none;align-items:center;gap:6px}
+  .err-msg.show{display:flex;animation:rise .26s var(--ease-out)}
+  .err-msg::before{content:"";width:13px;height:13px;flex:0 0 auto;border-radius:50%;background:var(--err);
+    -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 1 21h22L12 2zm0 6v7m0 3v.5' stroke='%23000' stroke-width='2.2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;
+    mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 1 21h22L12 2zm0 6v7m0 3v.5' stroke='%23000' stroke-width='2.2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat}
+
+  /* ---------- platform multi-select ---------- */
+  .dd{position:relative}
+  .dd-trigger{
+    width:100%;display:flex;align-items:center;gap:10px;cursor:pointer;text-align:left;
+    background:rgba(0,0,0,.3);border:1px solid var(--stroke);border-radius:13px;
+    padding:10px 15px;color:var(--text);font:inherit;min-height:48px;
+    transition:border-color var(--t) var(--ease-out),box-shadow var(--t) var(--ease-out),background var(--t) var(--ease-out);
+  }
+  .dd-trigger:hover{border-color:var(--stroke-2);background:rgba(0,0,0,.38)}
+  .dd.open .dd-trigger{border-color:var(--brand);box-shadow:0 0 0 4px rgba(109,94,252,.16)}
+  .dd-trigger .ph{color:#636d87}
+  .dd-trigger .caret{margin-left:auto;flex:0 0 auto;opacity:.55;transition:transform var(--t) var(--ease-spring)}
+  .dd.open .dd-trigger .caret{transform:rotate(180deg)}
+
+  .chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}
+  .chip{
+    display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:640;
+    padding:5px 10px 5px 5px;border-radius:999px;
+    background:rgba(255,255,255,.08);border:1px solid var(--stroke-2);
+    animation:pop var(--t) var(--ease-spring);
+  }
+  @keyframes pop{from{opacity:0;transform:scale(.72)}to{opacity:1;transform:scale(1)}}
+  .chip .sw{width:16px;height:16px;border-radius:5px;display:grid;place-items:center;flex:0 0 auto}
+  .chip .sw svg{width:9px;height:9px;fill:#fff}
+
+  .dd-panel{
+    position:absolute;top:calc(100% + 7px);left:0;right:0;z-index:30;
+    background:#141628;border:1px solid var(--stroke-2);border-radius:15px;padding:6px;
+    box-shadow:0 28px 64px -22px rgba(0,0,0,.94), inset 0 1px 0 rgba(255,255,255,.06);
+    max-height:300px;overflow:auto;
+    /* animated open/close instead of display toggle */
+    opacity:0;visibility:hidden;transform:translateY(-8px) scale(.985);transform-origin:top center;
+    transition:opacity var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out),visibility 0s linear var(--t-fast);
+  }
+  .dd.open .dd-panel{
+    opacity:1;visibility:visible;transform:none;
+    transition:opacity var(--t) var(--ease-out),transform var(--t) var(--ease-spring),visibility 0s;
+  }
+  .plat{
+    position:relative;display:flex;align-items:center;gap:12px;cursor:pointer;
+    border-radius:11px;padding:10px;min-height:44px;user-select:none;
+    transition:background var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
+  }
+  .plat:hover{background:rgba(255,255,255,.06);transform:translateX(2px)}
+  .plat:active{transform:scale(.985)}
+  .plat input{position:absolute;opacity:0;pointer-events:none}
+  .plat input:focus-visible ~ .chk{outline:2px solid var(--brand-2);outline-offset:2px}
+  .plat .ico{
+    width:30px;height:30px;border-radius:9px;display:grid;place-items:center;flex:0 0 auto;
+    background:rgba(255,255,255,.07);
+    transition:background var(--t) var(--ease-out),transform var(--t) var(--ease-spring);
+  }
+  .plat .ico svg{width:15px;height:15px;fill:#fff}
+  .plat .nm{font-size:14px;font-weight:640}
+  .plat .chk{
+    margin-left:auto;width:19px;height:19px;border-radius:6px;border:1.5px solid var(--stroke-2);
+    display:grid;place-items:center;flex:0 0 auto;
+    transition:background var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-spring);
+  }
+  .plat .chk svg{width:11px;height:11px;stroke:#fff;fill:none;stroke-width:3.2;stroke-linecap:round;stroke-linejoin:round;
+    stroke-dasharray:24;stroke-dashoffset:24;transition:stroke-dashoffset var(--t) var(--ease-out)}
+  .plat.on .chk{background:var(--brand);border-color:var(--brand);transform:scale(1.06)}
+  .plat.on .chk svg{stroke-dashoffset:0}
+  .plat.on .ico{background:var(--pc);transform:scale(1.06)}
+
+  /* ---------- youtube extras ---------- */
+  .extras{
+    margin-top:0;padding:0 17px;border:1px dashed transparent;border-radius:14px;background:rgba(0,0,0,.2);
+    max-height:0;overflow:hidden;opacity:0;
+    transition:max-height var(--t-slow) var(--ease-out),opacity var(--t) var(--ease-out),margin var(--t) var(--ease-out),padding var(--t) var(--ease-out),border-color var(--t) var(--ease-out);
+  }
+  .extras.show{max-height:260px;opacity:1;margin-top:14px;padding:17px;border-color:var(--stroke)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:640px){.row{grid-template-columns:1fr}}
+
+  .counts{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+  .tag{
+    font-size:11.5px;font-weight:600;padding:5px 10px;border-radius:999px;
+    background:rgba(255,255,255,.05);border:1px solid var(--stroke);color:var(--muted);
+    font-variant-numeric:tabular-nums;animation:pop var(--t-fast) var(--ease-spring);
+    transition:background var(--t) var(--ease-out),color var(--t) var(--ease-out),border-color var(--t) var(--ease-out);
+  }
+  .tag.over{background:rgba(255,95,112,.13);border-color:rgba(255,95,112,.42);color:#ffa3ad}
+
+  /* ---------- submit ---------- */
+  .submit{
+    position:relative;overflow:hidden;
+    width:100%;margin-top:4px;padding:16px;min-height:54px;border:0;border-radius:15px;cursor:pointer;
+    font:inherit;font-weight:700;font-size:15.5px;color:#fff;letter-spacing:-.01em;
+    background:linear-gradient(100deg,var(--brand),var(--brand-3) 55%,var(--brand-2));
+    background-size:180% 100%;
+    box-shadow:0 16px 38px -14px rgba(109,94,252,.85);
+    display:flex;align-items:center;justify-content:center;gap:9px;
+    transition:transform var(--t-fast) var(--ease-out),box-shadow var(--t) var(--ease-out),background-position var(--t-slow) var(--ease-out),opacity var(--t) var(--ease-out);
+  }
+  .submit:hover{transform:translateY(-2px);background-position:100% 0;box-shadow:0 22px 46px -14px rgba(109,94,252,.95)}
+  .submit:active{transform:translateY(0) scale(.988)}
+  .submit:disabled{opacity:.62;cursor:not-allowed;transform:none;box-shadow:none}
+  /* shine sweep */
+  .submit::after{
+    content:"";position:absolute;top:0;bottom:0;left:-60%;width:45%;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.26),transparent);
+    transform:skewX(-20deg);transition:left .7s var(--ease-out);
+  }
+  .submit:hover::after{left:120%}
+  .submit.done{background:linear-gradient(100deg,#1fae76,var(--ok));box-shadow:0 16px 38px -14px rgba(46,204,143,.75)}
+  .spin{width:16px;height:16px;border:2px solid rgba(255,255,255,.32);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;display:none}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .loading .spin{display:block}
+
+  /* ---------- toast ---------- */
+  .toast{
+    position:fixed;left:50%;bottom:26px;z-index:60;max-width:92vw;
+    transform:translate(-50%,150%);
+    background:rgba(21,23,42,.97);border:1px solid var(--stroke-2);border-radius:14px;padding:14px 18px;
+    display:flex;align-items:center;gap:12px;font-size:14px;font-weight:600;
+    backdrop-filter:blur(12px);
+    box-shadow:0 26px 64px -20px rgba(0,0,0,.95);
+    transition:transform 180ms var(--ease-out);   /* exit */
+  }
+  .toast.show{transform:translate(-50%,0);transition:transform var(--t-slow) var(--ease-spring)} /* enter */
+  .toast .bar{width:3px;height:28px;border-radius:3px;background:var(--ok);flex:0 0 auto}
+  .toast.bad .bar{background:var(--err)}
+
+  /* ---------- history ---------- */
+  .hist{margin-top:34px}
+  .hist h3{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:0 0 12px;font-weight:700}
+  .hitem{
+    display:flex;align-items:center;gap:12px;padding:13px 15px;
+    border:1px solid var(--stroke);border-radius:13px;background:rgba(255,255,255,.025);margin-bottom:8px;
+    animation:rise .42s var(--ease-out) backwards;animation-delay:var(--d,0ms);
+    transition:border-color var(--t) var(--ease-out),background var(--t) var(--ease-out),transform var(--t) var(--ease-out);
+  }
+  .hitem:hover{border-color:var(--stroke-2);background:rgba(255,255,255,.045);transform:translateX(3px)}
+  .hitem .cap{flex:1;min-width:0;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hitem .when{font-size:11.5px;color:var(--muted);flex:0 0 auto;font-variant-numeric:tabular-nums}
+  .hitem .pips{display:flex;gap:4px;flex:0 0 auto}
+  .pip{width:8px;height:8px;border-radius:50%}
+  .foot{text-align:center;color:#5b6379;font-size:12px;margin-top:44px}
+  .foot a{color:var(--muted);text-decoration:none;border-bottom:1px solid var(--stroke-2);transition:color var(--t-fast) var(--ease-out)}
+  .foot a:hover{color:var(--text)}
+
+  /* ---------- reduced motion (WCAG / HIG) ---------- */
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{
+      animation-duration:.01ms!important;animation-iteration-count:1!important;
+      transition-duration:.01ms!important;
+    }
+    .rv,.hitem{opacity:1!important;transform:none!important}
+    .bg .blob{animation:none!important}
+    .submit:hover{transform:none}
+  }
+</style>
+</head>
+<body>
+
+<!-- decorative only -->
+<div class="bg" aria-hidden="true">
+  <span class="blob b1"></span>
+  <span class="blob b2"></span>
+  <span class="blob b3"></span>
+  <span class="grid"></span>
+  <span class="noise"></span>
+  <span class="vig"></span>
+</div>
+
+<div class="wrap">
+
+  <header class="top rv" style="--d:0ms">
+    <div class="logo">
+      <span class="mark"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>
+      AutoPost
+    </div>
+    <button class="ghost" id="btnPreview" type="button">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      View payload
+    </button>
+  </header>
+
+  <div class="hero">
+    <div class="pill rv" style="--d:70ms"><span class="dot"></span> Connected to your Google Sheet</div>
+    <h1 class="rv" style="--d:130ms">Publish once.<br/><span class="grad">Post everywhere.</span></h1>
+    <p class="sub rv" style="--d:190ms">Drop a Google Drive link, write your caption, pick your channels. Every submission lands in your sheet, ready to post.</p>
+  </div>
+
+  <form class="card rv" id="form" style="--d:250ms" novalidate>
+
+    <div class="field">
+      <label class="lab" for="drive">Google Drive URL <span class="hint">image or video — shared "anyone with the link"</span></label>
+      <input type="url" id="drive" name="drive" inputmode="url" autocomplete="off" aria-describedby="driveErr"
+             placeholder="https://drive.google.com/file/d/1AbC.../view?usp=sharing" />
+      <p class="err-msg" id="driveErr" role="alert">Enter a valid Google Drive file or folder link.</p>
+    </div>
+
+    <div class="field">
+      <label class="lab" for="caption">Caption <span class="hint" id="capCount">0 characters</span></label>
+      <textarea id="caption" name="caption" aria-describedby="capErr"
+                placeholder="Write your caption here...&#10;&#10;#hashtags #go #here"></textarea>
+      <div class="counts" id="counts"></div>
+      <p class="err-msg" id="capErr" role="alert">Caption can't be empty.</p>
+    </div>
+
+    <div class="field">
+      <label class="lab" for="ddTrigger">Social accounts <span class="hint">pick at least one</span></label>
+      <div class="dd" id="dd">
+        <button type="button" class="dd-trigger" id="ddTrigger" aria-haspopup="listbox" aria-expanded="false">
+          <span class="chips" id="ddLabel"><span class="ph">Select platforms...</span></span>
+          <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6,9 12,15 18,9"/></svg>
+        </button>
+        <div class="dd-panel" id="plats" role="listbox" aria-multiselectable="true" aria-label="Social platforms"></div>
+      </div>
+      <p class="err-msg" id="platErr" role="alert">Select at least one platform.</p>
+
+      <div class="extras" id="ytExtra">
+        <div class="row">
+          <div>
+            <label class="lab" for="ytTitle">YouTube title <span class="hint">max 100</span></label>
+            <input type="text" id="ytTitle" maxlength="100" placeholder="Video title" />
+          </div>
+          <div>
+            <label class="lab" for="ytPrivacy">Visibility</label>
+            <select id="ytPrivacy">
+              <option value="public">Public</option>
+              <option value="unlisted">Unlisted</option>
+              <option value="private">Private</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <button class="submit" type="submit" id="btnSubmit">
+      <span class="spin" aria-hidden="true"></span>
+      <span class="txt">Save to sheet</span>
+    </button>
+  </form>
+
+  <section class="hist" id="hist" hidden>
+    <h3>Recent submissions</h3>
+    <div id="histList"></div>
+  </section>
+
+  <p class="foot">Submissions are appended to your <a id="sheetLink" href="#" target="_blank" rel="noopener">Google Sheet</a>.</p>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"><span class="bar"></span><span id="toastMsg"></span></div>
+
+<script>
+(function(){
+  /* ===== CONFIG =====================================================
+     SHEET_ENDPOINT = the Apps Script Web App /exec URL.
+     Deploy AppsScript.gs on the sheet (steps are in that file), then
+     paste the URL it gives you below.
+     ================================================================== */
+  var SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyEqtsXMM4vzWU3I6rg4ZdKynR4DsTW7sb-kEjPCyI1SjD27quKHpbus52yJRZz0HjDJA/exec';
+  var AUTH_TOKEN     = '';       // optional — must match SHARED_TOKEN in AppsScript.gs
+  var SHEET_URL      = 'https://docs.google.com/spreadsheets/d/1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k/edit';
+  /* ================================================================== */
+
+  var PLATFORMS = [
+    { id:'facebook', name:'Facebook',  limit:63206, color:'#1877F2', path:'M22 12a10 10 0 1 0-11.6 9.9v-7h-2.5V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.4h-1.2c-1.2 0-1.6.8-1.6 1.6V12h2.7l-.4 2.9h-2.3v7A10 10 0 0 0 22 12z' },
+    { id:'instagram',name:'Instagram', limit:2200,  color:'#E1306C', path:'M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.3 2.2.4.6.2 1 .5 1.4.9.4.4.7.8.9 1.4.2.4.4 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.3 1.8-.4 2.2-.2.6-.5 1-.9 1.4-.4.4-.8.7-1.4.9-.4.2-1 .4-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.3-2.2-.4-.6-.2-1-.5-1.4-.9-.4-.4-.7-.8-.9-1.4-.2-.4-.4-1-.4-2.2C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.9c.1-1.2.3-1.8.4-2.2.2-.6.5-1 .9-1.4.4-.4.8-.7 1.4-.9.4-.2 1-.4 2.2-.4C8.4 2.2 8.8 2.2 12 2.2zm0 3.8a6 6 0 1 0 0 12 6 6 0 0 0 0-12zm0 9.9a3.9 3.9 0 1 1 0-7.8 3.9 3.9 0 0 1 0 7.8zm7.6-10.2a1.4 1.4 0 1 1-2.8 0 1.4 1.4 0 0 1 2.8 0z' },
+    { id:'twitter',  name:'X / Twitter',limit:280,  color:'#000000', path:'M17.5 3h3.2l-7 8 8.2 10h-6.4l-5-6.1L4.8 21H1.6l7.5-8.6L1.2 3h6.6l4.5 5.6L17.5 3zm-1.1 16.1h1.8L7.7 4.8H5.8l10.6 14.3z' },
+    { id:'linkedin', name:'LinkedIn',  limit:3000,  color:'#0A66C2', path:'M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM3 9h4v12H3V9zm7 0h3.8v1.7h.1c.5-1 1.8-2 3.7-2 4 0 4.7 2.6 4.7 6V21h-4v-5.6c0-1.3 0-3-1.9-3s-2.2 1.4-2.2 2.9V21h-4V9z' },
+    { id:'youtube',  name:'YouTube',   limit:5000,  color:'#FF0000', path:'M23 12s0-3.5-.4-5.2a2.9 2.9 0 0 0-2-2C18.7 4.3 12 4.3 12 4.3s-6.7 0-8.6.5a2.9 2.9 0 0 0-2 2C1 8.5 1 12 1 12s0 3.5.4 5.2c.2 1 1 1.7 2 2 1.9.5 8.6.5 8.6.5s6.7 0 8.6-.5a2.9 2.9 0 0 0 2-2C23 15.5 23 12 23 12zM9.8 15.4V8.6l5.8 3.4-5.8 3.4z' }
+  ];
+
+  var $ = function(id){ return document.getElementById(id); };
+  var LS = { hist:'ap_hist' };
+
+  $('sheetLink').href = SHEET_URL;
+
+  /* ---- build platform rows ---- */
+  var platsEl = $('plats');
+  PLATFORMS.forEach(function(p){
+    var l = document.createElement('label');
+    l.className = 'plat';
+    l.style.setProperty('--pc', p.color);
+    l.innerHTML =
+      '<input type="checkbox" value="'+p.id+'" />' +
+      '<span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="'+p.path+'"/></svg></span>' +
+      '<span class="nm">'+p.name+'</span>' +
+      '<span class="chk"><svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4,12 9,17 20,6"/></svg></span>';
+    var cb = l.querySelector('input');
+    cb.addEventListener('change', function(){
+      l.classList.toggle('on', cb.checked);
+      $('ytExtra').classList.toggle('show', platsEl.querySelector('input[value=youtube]').checked);
+      $('platErr').classList.remove('show');
+      renderLabel();
+      renderCounts();
+    });
+    platsEl.appendChild(l);
+  });
+
+  function selected(){
+    return [].slice.call(platsEl.querySelectorAll('input:checked')).map(function(i){ return i.value; });
+  }
+  function meta(id){
+    return PLATFORMS.filter(function(x){ return x.id === id; })[0];
+  }
+
+  /* ---- dropdown ---- */
+  var dd = $('dd');
+  function renderLabel(){
+    var sel = selected();
+    if(!sel.length){
+      $('ddLabel').innerHTML = '<span class="ph">Select platforms...</span>';
+      return;
+    }
+    $('ddLabel').innerHTML = sel.map(function(id){
+      var p = meta(id);
+      return '<span class="chip"><span class="sw" style="background:'+p.color+'">' +
+             '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="'+p.path+'"/></svg></span>'+p.name+'</span>';
+    }).join('');
+  }
+  function setOpen(v){
+    dd.classList.toggle('open', v);
+    $('ddTrigger').setAttribute('aria-expanded', v ? 'true' : 'false');
+  }
+  $('ddTrigger').addEventListener('click', function(e){
+    e.stopPropagation();
+    setOpen(!dd.classList.contains('open'));
+  });
+  document.addEventListener('click', function(e){
+    if(!dd.contains(e.target)) setOpen(false);
+  });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && dd.classList.contains('open')){
+      setOpen(false);
+      $('ddTrigger').focus();
+    }
+  });
+  renderLabel();
+
+  /* ---- caption counters ---- */
+  function renderCounts(){
+    var len = $('caption').value.length;
+    $('capCount').textContent = len.toLocaleString() + ' characters';
+    $('counts').innerHTML = selected().map(function(id){
+      var p = meta(id), over = len > p.limit;
+      return '<span class="tag'+(over?' over':'')+'">'+p.name+' '+len.toLocaleString()+'/'+p.limit.toLocaleString()+(over?' — too long':'')+'</span>';
+    }).join('');
+  }
+  $('caption').addEventListener('input', function(){ renderCounts(); $('capErr').classList.remove('show'); });
+
+  /* ---- helpers ---- */
+  function driveId(url){
+    var m = url.match(/\/d\/([a-zA-Z0-9_-]{10,})/) || url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) || url.match(/\/folders\/([a-zA-Z0-9_-]{10,})/);
+    return m ? m[1] : null;
+  }
+  function toast(msg, bad){
+    var t = $('toast');
+    $('toastMsg').textContent = msg;
+    t.classList.toggle('bad', !!bad);
+    t.classList.add('show');
+    clearTimeout(t._t);
+    t._t = setTimeout(function(){ t.classList.remove('show'); }, 4200);
+  }
+
+  function buildPayload(){
+    var url = $('drive').value.trim();
+    return {
+      driveUrl: url,
+      driveFileId: driveId(url),
+      caption: $('caption').value,
+      platforms: selected(),
+      youtube: selected().indexOf('youtube') > -1
+        ? { title: $('ytTitle').value.trim(), privacy: $('ytPrivacy').value }
+        : null,
+      submittedAt: new Date().toISOString(),
+      source: 'autopost-landing',
+      token: AUTH_TOKEN            // in the body, not a header — a custom header
+                                   // would trigger a CORS preflight Apps Script can't answer
+    };
+  }
+
+  /* ---- validation: errors near the field, focus the first bad one ---- */
+  function validate(){
+    var first = null;
+    var url = $('drive').value.trim();
+    var badUrl = !url || url.indexOf('drive.google.com') === -1 || !driveId(url);
+
+    $('drive').classList.remove('inp-invalid');
+    if(badUrl){
+      void $('drive').offsetWidth;               // restart the shake
+      $('drive').classList.add('inp-invalid');
+      $('drive').setAttribute('aria-invalid','true');
+      $('driveErr').classList.add('show');
+      first = first || $('drive');
+    } else {
+      $('drive').removeAttribute('aria-invalid');
+      $('driveErr').classList.remove('show');
+    }
+
+    if(!$('caption').value.trim()){
+      $('capErr').classList.add('show');
+      first = first || $('caption');
+    }
+    if(!selected().length){
+      $('platErr').classList.add('show');
+      first = first || $('ddTrigger');
+    }
+    if(first) first.focus({ preventScroll:false });
+    return !first;
+  }
+
+  $('drive').addEventListener('input', function(){
+    this.classList.remove('inp-invalid');
+    this.removeAttribute('aria-invalid');
+    $('driveErr').classList.remove('show');
+  });
+
+  /* ---- payload preview ---- */
+  $('btnPreview').addEventListener('click', function(){
+    var w = window.open('', '_blank', 'width=560,height=640');
+    w.document.write('<title>Payload</title><body style="background:#08090f;color:#eef1f8;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;padding:22px"><pre>' +
+      JSON.stringify(buildPayload(), null, 2).replace(/</g,'&lt;') + '</pre>');
+    w.document.close();
+  });
+
+  /* ---- history ---- */
+  function loadHist(){
+    try { return JSON.parse(localStorage.getItem(LS.hist) || '[]'); } catch(e){ return []; }
+  }
+  function renderHist(){
+    var items = loadHist();
+    if(!items.length){ $('hist').hidden = true; return; }
+    $('hist').hidden = false;
+    $('histList').innerHTML = items.slice(0, 6).map(function(it, i){
+      var pips = it.platforms.map(function(id){
+        var p = meta(id);
+        return p ? '<span class="pip" style="background:'+p.color+'"></span>' : '';
+      }).join('');
+      var d = new Date(it.submittedAt);
+      var cap = (it.caption || '').replace(/</g,'&lt;').slice(0, 90) || '(no caption)';
+      return '<div class="hitem" style="--d:'+(i*45)+'ms"><span class="pips">'+pips+'</span>' +
+             '<span class="cap">'+cap+'</span>' +
+             '<span class="when">'+d.toLocaleDateString()+' '+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</span></div>';
+    }).join('');
+  }
+  function saveHist(p){
+    var items = loadHist();
+    items.unshift({ caption:p.caption, platforms:p.platforms, submittedAt:p.submittedAt });
+    localStorage.setItem(LS.hist, JSON.stringify(items.slice(0, 20)));
+    renderHist();
+  }
+  renderHist();
+
+  /* ---- submit ---- */
+  $('form').addEventListener('submit', function(e){
+    e.preventDefault();
+    if(!validate()){ toast('Fix the highlighted fields.', true); return; }
+
+    if(!SHEET_ENDPOINT){
+      toast('No endpoint configured — set SHEET_ENDPOINT in the page script.', true);
+      return;
+    }
+
+    var payload = buildPayload();
+    var btn = $('btnSubmit'), txt = btn.querySelector('.txt');
+    btn.classList.add('loading');
+    btn.disabled = true;
+    txt.textContent = 'Saving to sheet...';
+
+    /* text/plain keeps this a "simple request" — no OPTIONS preflight,
+       which Apps Script web apps cannot respond to. */
+    fetch(SHEET_ENDPOINT, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body:JSON.stringify(payload)
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        if(!res || !res.ok) throw new Error(res && res.error ? res.error : 'The sheet rejected the submission.');
+        saveHist(payload);
+        toast('Saved to your Google Sheet — row ' + res.row + '.');
+
+        /* brief success state on the button before it resets */
+        btn.classList.remove('loading');
+        btn.classList.add('done');
+        txt.textContent = 'Saved to sheet';
+        setTimeout(function(){ btn.classList.remove('done'); }, 1600);
+
+        $('caption').value = '';
+        $('drive').value = '';
+        $('ytTitle').value = '';
+        renderCounts();
+      })
+      .catch(function(err){
+        btn.classList.remove('loading');
+        toast(err.message.indexOf('Failed to fetch') > -1
+          ? 'Could not reach the sheet — check the deployment is set to "Anyone".'
+          : err.message, true);
+      })
+      .finally(function(){
+        btn.classList.remove('loading');
+        btn.disabled = false;
+        setTimeout(function(){
+          if(!btn.classList.contains('done')) txt.textContent = 'Save to sheet';
+        }, 1600);
+      });
+  });
+})();
+</script>
+</body>
+</html>
