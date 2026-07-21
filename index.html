@@ -303,21 +303,48 @@
   .toast.show{transform:translate(-50%,0);transition:transform var(--t-slow) var(--ease-spring)} /* enter */
   .toast .bar{width:3px;height:28px;border-radius:3px;background:var(--ok);flex:0 0 auto}
   .toast.bad .bar{background:var(--err)}
+  .toast .undo{
+    display:none;margin-left:4px;background:rgba(255,255,255,.09);border:1px solid var(--stroke-2);
+    color:var(--text);font:inherit;font-size:12.5px;font-weight:650;cursor:pointer;
+    padding:7px 12px;border-radius:9px;
+    transition:background var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
+  }
+  .toast .undo:hover{background:rgba(255,255,255,.16)}
+  .toast .undo:active{transform:scale(.95)}
+  .toast.has-undo .undo{display:block}
 
   /* ---------- history ---------- */
   .hist{margin-top:34px}
-  .hist h3{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:0 0 12px;font-weight:700}
+  .hist-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+  .hist h3{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:0;font-weight:700}
+  .clear-all{
+    background:none;border:0;color:var(--muted);font:inherit;font-size:12px;font-weight:600;
+    cursor:pointer;padding:8px 10px;border-radius:9px;
+    transition:color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  .clear-all:hover{color:var(--err);background:rgba(255,95,112,.09)}
   .hitem{
-    display:flex;align-items:center;gap:12px;padding:13px 15px;
+    display:flex;align-items:center;gap:12px;padding:9px 9px 9px 15px;
     border:1px solid var(--stroke);border-radius:13px;background:rgba(255,255,255,.025);margin-bottom:8px;
     animation:rise .42s var(--ease-out) backwards;animation-delay:var(--d,0ms);
-    transition:border-color var(--t) var(--ease-out),background var(--t) var(--ease-out),transform var(--t) var(--ease-out);
+    transition:border-color var(--t) var(--ease-out),background var(--t) var(--ease-out),transform var(--t) var(--ease-out),opacity var(--t) var(--ease-out);
   }
-  .hitem:hover{border-color:var(--stroke-2);background:rgba(255,255,255,.045);transform:translateX(3px)}
+  .hitem:hover{border-color:var(--stroke-2);background:rgba(255,255,255,.045)}
+  .hitem.going{opacity:0;transform:translateX(28px)}
   .hitem .cap{flex:1;min-width:0;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .hitem .when{font-size:11.5px;color:var(--muted);flex:0 0 auto;font-variant-numeric:tabular-nums}
   .hitem .pips{display:flex;gap:4px;flex:0 0 auto}
   .pip{width:8px;height:8px;border-radius:50%}
+  .del{
+    flex:0 0 auto;width:44px;height:44px;display:grid;place-items:center;
+    background:none;border:0;border-radius:10px;cursor:pointer;color:var(--muted);opacity:.5;
+    transition:opacity var(--t-fast) var(--ease-out),color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  .hitem:hover .del{opacity:1}
+  .del:hover{color:var(--err);background:rgba(255,95,112,.12)}
+  .del:focus-visible{opacity:1}
+  .del:active{transform:scale(.92)}
+  .del svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round}
   .foot{text-align:center;color:#5b6379;font-size:12px;margin-top:44px}
   .foot a{color:var(--muted);text-decoration:none;border-bottom:1px solid var(--stroke-2);transition:color var(--t-fast) var(--ease-out)}
   .foot a:hover{color:var(--text)}
@@ -418,14 +445,21 @@
   </form>
 
   <section class="hist" id="hist" hidden>
-    <h3>Recent submissions</h3>
+    <div class="hist-head">
+      <h3>Recent submissions</h3>
+      <button class="clear-all" type="button" id="btnClear">Clear all</button>
+    </div>
     <div id="histList"></div>
   </section>
 
   <p class="foot">Submissions are appended to your <a id="sheetLink" href="#" target="_blank" rel="noopener">Google Sheet</a>.</p>
 </div>
 
-<div class="toast" id="toast" role="status" aria-live="polite"><span class="bar"></span><span id="toastMsg"></span></div>
+<div class="toast" id="toast" role="status" aria-live="polite">
+  <span class="bar"></span>
+  <span id="toastMsg"></span>
+  <button class="undo" type="button" id="btnUndo">Undo</button>
+</div>
 
 <script>
 (function(){
@@ -530,14 +564,22 @@
     var m = url.match(/\/d\/([a-zA-Z0-9_-]{10,})/) || url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) || url.match(/\/folders\/([a-zA-Z0-9_-]{10,})/);
     return m ? m[1] : null;
   }
-  function toast(msg, bad){
+  /* toast(msg, bad, undoFn) — undoFn adds an Undo button for destructive actions */
+  function toast(msg, bad, undoFn){
     var t = $('toast');
     $('toastMsg').textContent = msg;
     t.classList.toggle('bad', !!bad);
+    t.classList.toggle('has-undo', !!undoFn);
+    t._undo = undoFn || null;
     t.classList.add('show');
     clearTimeout(t._t);
-    t._t = setTimeout(function(){ t.classList.remove('show'); }, 4200);
+    t._t = setTimeout(function(){ t.classList.remove('show'); t._undo = null; }, undoFn ? 6000 : 4200);
   }
+  $('btnUndo').addEventListener('click', function(){
+    var t = $('toast');
+    if(t._undo){ t._undo(); t._undo = null; }
+    t.classList.remove('show');
+  });
 
   function buildPayload(){
     var url = $('drive').value.trim();
@@ -604,6 +646,9 @@
   function loadHist(){
     try { return JSON.parse(localStorage.getItem(LS.hist) || '[]'); } catch(e){ return []; }
   }
+  function writeHist(items){
+    localStorage.setItem(LS.hist, JSON.stringify(items.slice(0, 20)));
+  }
   function renderHist(){
     var items = loadHist();
     if(!items.length){ $('hist').hidden = true; return; }
@@ -615,17 +660,61 @@
       }).join('');
       var d = new Date(it.submittedAt);
       var cap = (it.caption || '').replace(/</g,'&lt;').slice(0, 90) || '(no caption)';
-      return '<div class="hitem" style="--d:'+(i*45)+'ms"><span class="pips">'+pips+'</span>' +
-             '<span class="cap">'+cap+'</span>' +
-             '<span class="when">'+d.toLocaleDateString()+' '+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</span></div>';
+      return '<div class="hitem" style="--d:'+(i*45)+'ms" data-i="'+i+'">' +
+               '<span class="pips">'+pips+'</span>' +
+               '<span class="cap">'+cap+'</span>' +
+               '<span class="when">'+d.toLocaleDateString()+' '+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</span>' +
+               '<button class="del" type="button" data-i="'+i+'" aria-label="Remove this entry from the list">' +
+                 '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>' +
+               '</button>' +
+             '</div>';
     }).join('');
   }
   function saveHist(p){
     var items = loadHist();
     items.unshift({ caption:p.caption, platforms:p.platforms, submittedAt:p.submittedAt });
-    localStorage.setItem(LS.hist, JSON.stringify(items.slice(0, 20)));
+    writeHist(items);
     renderHist();
   }
+
+  /* remove one entry, with undo */
+  $('histList').addEventListener('click', function(e){
+    var btn = e.target.closest('.del');
+    if(!btn) return;
+    var i = +btn.getAttribute('data-i');
+    var items = loadHist();
+    var removed = items[i];
+    if(!removed) return;
+
+    var row = btn.closest('.hitem');
+    row.classList.add('going');          // let it slide out before the list redraws
+
+    setTimeout(function(){
+      items.splice(i, 1);
+      writeHist(items);
+      renderHist();
+      toast('Entry removed from this list.', false, function(){
+        var back = loadHist();
+        back.splice(i, 0, removed);
+        writeHist(back);
+        renderHist();
+      });
+    }, 200);
+  });
+
+  /* clear everything — destructive, so confirm first */
+  $('btnClear').addEventListener('click', function(){
+    var items = loadHist();
+    if(!items.length) return;
+    if(!confirm('Clear all ' + items.length + ' entries from this list?\n\nThis only clears the list shown here — rows already saved in your Google Sheet are not affected.')) return;
+    localStorage.removeItem(LS.hist);
+    renderHist();
+    toast('List cleared.', false, function(){
+      writeHist(items);
+      renderHist();
+    });
+  });
+
   renderHist();
 
   /* ---- submit ---- */
