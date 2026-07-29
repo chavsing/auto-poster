@@ -18,6 +18,16 @@ var SHEET_ID    = '1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k';
 var SHEET_NAME  = '';   // leave blank to use the first tab
 var SHARED_TOKEN = '';  // optional: set a password here AND in index.html's AUTH_TOKEN
 
+/* This script's only job is to append the row. n8n polls the sheet on its own
+   schedule and decides when to publish — nothing here talks to n8n. */
+
+/* What a fresh submission lands as. The `status` dropdown holds exactly two
+   values: 'For review' (held) and 'Publish' (n8n picks it up). This must be
+   the held one — a human moves the row to 'Publish' after reviewing.
+   CHANGING THIS FILE IS NOT ENOUGH: redeploy as a NEW VERSION or the live
+   /exec URL keeps running the old code. */
+var NEW_STATUS = 'For review';
+
 /* Column headers are matched case-insensitively against these aliases.
    Add a column to the sheet with any of these names and it fills itself in. */
 var FIELD_ALIASES = {
@@ -28,6 +38,8 @@ var FIELD_ALIASES = {
   ytTitle:    ['youtube title', 'yt title', 'video title', 'title'],
   ytPrivacy:  ['youtube privacy', 'yt privacy', 'visibility', 'privacy'],
   status:     ['status', 'state'],
+  scheduledAt:['post at', 'publish at', 'schedule', 'scheduled', 'scheduled at', 'post date', 'publish date'],
+  timezone:   ['timezone', 'time zone', 'tz'],
   timestamp:  ['timestamp', 'date', 'submitted', 'submitted at', 'created', 'time']
 };
 
@@ -72,11 +84,14 @@ function doPost(e) {
     var row = headers.map(function (h) { return cellFor(h, body, platforms); });
 
     sheet.appendRow(row);
+    var scheduleStored = writeSchedule(sheet, headers, body.scheduledAt);
 
     return respond({
       ok: true,
       row: sheet.getLastRow(),
-      platforms: platforms.length
+      platforms: platforms.length,
+      scheduledAt: body.scheduledAt || '',
+      scheduleStored: scheduleStored   // false => the sheet has no "post at" column
     });
 
   } catch (err) {
@@ -103,9 +118,37 @@ function cellFor(header, body, platforms) {
   if (matches(header, FIELD_ALIASES.platforms))   return platforms.join(', ');
   if (matches(header, FIELD_ALIASES.ytTitle))     return body.youtube ? body.youtube.title : '';
   if (matches(header, FIELD_ALIASES.ytPrivacy))   return body.youtube ? body.youtube.privacy : '';
-  if (matches(header, FIELD_ALIASES.status))      return 'new';
+  if (matches(header, FIELD_ALIASES.scheduledAt)) return '';   // written as text below
+  if (matches(header, FIELD_ALIASES.timezone))    return body.timezone || '';
+  if (matches(header, FIELD_ALIASES.status))      return NEW_STATUS;
 
   return '';   // unknown column: leave it alone
+}
+
+/**
+ * Write the schedule as plain text.
+ *
+ * appendRow would let Sheets coerce "2026-08-01T09:30:00Z" into a date value
+ * rendered in the SPREADSHEET's timezone, which quietly shifts the instant the
+ * automation reads. Forcing the cell to text first keeps the UTC string exactly
+ * as the browser sent it.
+ */
+function writeSchedule(sheet, headers, scheduledAt) {
+  if (!scheduledAt) return true;   // nothing to store
+
+  var col = -1;
+  for (var i = 0; i < headers.length; i++) {
+    if (matches(headers[i], FIELD_ALIASES.scheduledAt)) { col = i; break; }
+  }
+  // No schedule column. Say so instead of dropping the time on the floor —
+  // a blank publish time means "post immediately", which is not what the
+  // person who picked a date was asking for.
+  if (col < 0) return false;
+
+  var cell = sheet.getRange(sheet.getLastRow(), col + 1);
+  cell.setNumberFormat('@');
+  cell.setValue(scheduledAt);
+  return true;
 }
 
 function matches(header, aliases) {
@@ -133,6 +176,8 @@ function testAppend() {
         caption: 'Test row from the Apps Script editor.',
         platforms: ['facebook', 'instagram'],
         youtube: null,
+        scheduledAt: new Date(Date.now() + 3600000).toISOString(),
+        timezone: 'Asia/Manila',
         token: SHARED_TOKEN
       })
     }

@@ -1,0 +1,1515 @@
+{
+  "name": "AutoPost v2 — publish to all platforms via Blotato",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodes": [
+    {
+      "id": "trigger-schedule",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1440,
+        420
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1220,
+        500
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-fb-a",
+              "name": "facebookAccountId",
+              "value": "PASTE_BLOTATO_FACEBOOK_ACCOUNT_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-fb-p",
+              "name": "facebookPageId",
+              "value": "PASTE_FACEBOOK_PAGE_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-fb-m",
+              "name": "facebookVideoMode",
+              "value": "reel",
+              "type": "string"
+            },
+            {
+              "id": "cfg-ig-a",
+              "name": "instagramAccountId",
+              "value": "PASTE_BLOTATO_INSTAGRAM_ACCOUNT_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-ig-m",
+              "name": "instagramVideoMode",
+              "value": "reel",
+              "type": "string"
+            },
+            {
+              "id": "cfg-tw-a",
+              "name": "twitterAccountId",
+              "value": "PASTE_BLOTATO_TWITTER_ACCOUNT_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-li-a",
+              "name": "linkedinAccountId",
+              "value": "PASTE_BLOTATO_LINKEDIN_ACCOUNT_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-yt-a",
+              "name": "youtubeAccountId",
+              "value": "PASTE_BLOTATO_YOUTUBE_ACCOUNT_ID",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "notes": "One Blotato account id per platform — or clear the expression on a publish node and pick the account from its dropdown instead.\nfacebookVideoMode: 'reel' | 'video'\ninstagramVideoMode: 'reel' | 'story'\nBoth are ignored for image posts.\nTo post LinkedIn as a Company Page, add 'Linkedin Page' in the LinkedIn publish node's Options."
+    },
+    {
+      "id": "sheet-read",
+      "name": "Get new rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -1000,
+        500
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Sheet1"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "Publish"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Only rows a human has moved to \"Publish\". n8n never writes this column."
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -780,
+        500
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Normalise one sheet row into a publish job.\n// Column headers are matched case-insensitively, so renaming one in the sheet\n// doesn't break this.\nconst PRIVACY = ['public', 'unlisted', 'private'];\n\n// Canonical platform ids. Used for BOTH layouts: a TRUE/FALSE column per\n// platform (what this sheet uses) and a single comma-separated column.\nconst PLATFORM_ALIASES = {\n  facebook: 'facebook', fb: 'facebook', 'facebook page': 'facebook',\n  instagram: 'instagram', ig: 'instagram', insta: 'instagram',\n  twitter: 'twitter', x: 'twitter', 'x / twitter': 'twitter', 'twitter / x': 'twitter',\n  linkedin: 'linkedin', li: 'linkedin',\n  youtube: 'youtube', yt: 'youtube', shorts: 'youtube',\n};\n\nfunction pick(row, names) {\n  for (const name of names) {\n    const key = Object.keys(row).find((k) => k.trim().toLowerCase() === name);\n    if (key && row[key] !== '' && row[key] !== null && row[key] !== undefined) return row[key];\n  }\n  return '';\n}\n\n// A ticked checkbox arrives as a real boolean; a typed one as text.\nfunction truthy(v) {\n  if (v === true) return true;\n  const s = String(v).trim().toLowerCase();\n  return s === 'true' || s === 'yes' || s === 'y' || s === '1' || s === 'x';\n}\n\nfunction platformsFrom(row) {\n  const found = new Set();\n  // (a) one TRUE column per platform\n  for (const key of Object.keys(row)) {\n    const canon = PLATFORM_ALIASES[key.trim().toLowerCase()];\n    if (canon && truthy(row[key])) found.add(canon);\n  }\n  // (b) or a single comma-separated column, if the sheet ever grows one\n  String(pick(row, ['platforms', 'channels', 'accounts', 'social']))\n    .split(/[,;|]/)\n    .map((s) => s.trim().toLowerCase())\n    .filter(Boolean)\n    .forEach((s) => { const c = PLATFORM_ALIASES[s]; if (c) found.add(c); });\n  return [...found];\n}\n\n// Google Sheets can hand back a schedule three different ways depending on how\n// the cell was formatted, so accept all of them rather than trust one.\nfunction parseWhen(v) {\n  if (v === '' || v === null || v === undefined) return null;\n  if (v instanceof Date) return v;\n  if (typeof v === 'number') {\n    // Sheets serial date: days since 1899-12-30, in the spreadsheet's timezone\n    return new Date(Math.round((v - 25569) * 86400000));\n  }\n  const d = new Date(String(v).trim());\n  return isNaN(d.getTime()) ? null : d;\n}\n\nfunction readCommon(row) {\n  const driveUrl = String(pick(row, ['gdrive url', 'drive url', 'google drive url', 'gdrive', 'url', 'link', 'media']));\n  let fileId = String(pick(row, ['file id', 'fileid', 'drive file id', 'gdrive id']));\n  if (!fileId) {\n    const m = driveUrl.match(/\\/d\\/([a-zA-Z0-9_-]{10,})/) || driveUrl.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);\n    fileId = m ? m[1] : '';\n  }\n\n  // Blotato's Media > Upload fetches this URL itself, so it has to be public.\n  // If an image ever fails, try https://lh3.googleusercontent.com/d/<fileId>.\n  const mediaUrl = fileId ? `https://drive.google.com/uc?export=download&id=${fileId}` : '';\n\n  // n8n owns this column. Anything in it means a previous run already claimed\n  // or finished the row — never touch it again, or an approved row would be\n  // re-published on every single sweep.\n  const alreadyHandled = String(pick(row, ['post status', 'automation status', 'publish status'])).trim() !== '';\n\n  // Blank publish time means \"go on the next sweep\"; unreadable is an error,\n  // not a licence to publish immediately.\n  const scheduledRaw = pick(row, ['post at', 'publish at', 'schedule', 'scheduled', 'scheduled at', 'post date', 'publish date']);\n  const hasSchedule = scheduledRaw !== '' && scheduledRaw !== null && scheduledRaw !== undefined;\n  const dueAt = hasSchedule ? parseWhen(scheduledRaw) : null;\n  const badSchedule = hasSchedule && !dueAt;\n  const isDue = !hasSchedule || (!!dueAt && dueAt.getTime() <= Date.now());\n\n  return {\n    driveUrl,\n    fileId,\n    mediaUrl,\n    caption: String(pick(row, ['caption', 'text', 'post caption', 'message', 'content'])),\n    platforms: platformsFrom(row),\n    alreadyHandled,\n    dueAt,\n    badSchedule,\n    isDue,\n  };\n}\n\nreturn $input.all().map((item, i) => {\n  const row = item.json;\n  const c = readCommon(row);\n\n  const privacyRaw = String(pick(row, ['youtube privacy', 'yt privacy', 'visibility', 'privacy'])).toLowerCase();\n\n  const problems = [];\n  if (!c.fileId) problems.push('no Google Drive file id');\n  if (!c.caption) problems.push('empty caption');\n  if (!c.platforms.length) problems.push('no platforms ticked');\n  if (c.badSchedule) problems.push('unreadable publish time');\n\n  return {\n    json: {\n      row_number: row.row_number,\n      driveUrl: c.driveUrl,\n      fileId: c.fileId,\n      caption: c.caption,\n      platforms: c.platforms,\n      mediaUrl: c.mediaUrl,\n      ytTitle: String(pick(row, ['youtube title', 'yt title', 'video title', 'title'])),\n      ytPrivacy: PRIVACY.includes(privacyRaw) ? privacyRaw : 'private',\n      scheduledAt: c.dueAt ? c.dueAt.toISOString() : '',\n      alreadyHandled: c.alreadyHandled,\n      isDue: c.isDue,\n      valid: problems.length === 0,\n      problems: problems.join('; '),\n    },\n    pairedItem: { item: i },\n  };\n});"
+      }
+    },
+    {
+      "id": "valid-check",
+      "name": "Valid row?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -340,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid-1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "mark-processing",
+      "name": "Mark processing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        100,
+        360
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "row_number"
+          ],
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "post status": "processing"
+          },
+          "schema": []
+        },
+        "options": {}
+      },
+      "notes": "Claims the row in the automation column so an overlapping sweep can't publish it twice. The human `status` column is left alone."
+    },
+    {
+      "id": "blotato-media",
+      "name": "Blotato upload media",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        320,
+        360
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "media",
+        "operation": "upload",
+        "useBinaryData": false,
+        "mediaUrl": "={{ $('Prepare jobs').item.json.mediaUrl }}"
+      },
+      "notes": "Uploaded once per row and reused by every platform. URL upload, not binary — the node's own note says binary is size-capped and to use a URL for Google Drive files (up to ~60 MB)."
+    },
+    {
+      "id": "fanout",
+      "name": "Fan out per platform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        540,
+        360
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One row in -> one item per selected platform out.\n// Anything that can't be published is routed to 'unsupported' with a reason\n// rather than being attempted and failing with a vague API error.\nconst VIDEO_EXT = /\\.(mp4|mov|m4v|webm|mkv|avi)(\\?|$)/i;\n\n// Same limits the form warns about.\nconst LIMITS = { facebook: 63206, instagram: 2200, twitter: 280, linkedin: 3000, youtube: 5000 };\n\nconst jobs = $('Prepare jobs').all().filter((j) => j.json.valid);\nconst out = [];\n\n$input.all().forEach((item, i) => {\n  const job = jobs[i] ? jobs[i].json : {};\n  const res = item.json || {};\n\n  // Blotato re-hosts the file keeping its real extension, so the URL it returns\n  // tells us whether this is a video.\n  const uploadedUrl = res.url ? String(res.url) : '';\n  // The Blotato node reports failures as a plain string on `error`.\n  const uploadError = res.error\n    ? String(res.error.message || res.error)\n    : (uploadedUrl ? '' : 'Blotato returned no media URL — check the Drive file is shared \"anyone with the link\"');\n  const isVideo = VIDEO_EXT.test(uploadedUrl);\n\n  for (const platform of job.platforms || []) {\n    let reason = '';\n    if (!uploadedUrl) {\n      reason = 'media upload failed: ' + uploadError;\n    } else if (platform === 'youtube' && !isVideo) {\n      reason = 'YouTube accepts video files only';\n    } else if (job.caption.length > LIMITS[platform]) {\n      reason = `caption is ${job.caption.length} characters, ${platform} allows ${LIMITS[platform]}`;\n    }\n\n    out.push({\n      json: {\n        ...job,\n        platform,\n        route: reason ? 'unsupported' : platform,\n        unsupportedReason: reason,\n        mediaUrl: uploadedUrl,\n        isVideo,\n      },\n      pairedItem: { item: i },\n    });\n  }\n});\n\nreturn out;"
+      }
+    },
+    {
+      "id": "route",
+      "name": "Route platform",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        760,
+        360
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-fb",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "facebook",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "facebook"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-ig",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "instagram",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "instagram"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-tw",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "twitter",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "twitter"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-li",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "linkedin",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "linkedin"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-yt",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "youtube",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "youtube"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-un",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "unsupported",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "unsupported"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "pub-fb",
+      "name": "Facebook publish",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        -160
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "platform": "facebook",
+        "accountId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.facebookAccountId }}"
+        },
+        "facebookPageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.facebookPageId }}"
+        },
+        "postContentText": "={{ $json.caption }}",
+        "postContentMediaUrls": "={{ $json.mediaUrl }}",
+        "useNextFreeSlot": false,
+        "options": {
+          "facebookMediaType": "={{ $json.isVideo ? $('Config').first().json.facebookVideoMode : '' }}"
+        }
+      },
+      "notes": "mediaType resolves to '' for images, which the node treats as unset — it only applies to video."
+    },
+    {
+      "id": "pub-ig",
+      "name": "Instagram publish",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        40
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "platform": "instagram",
+        "accountId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.instagramAccountId }}"
+        },
+        "postContentText": "={{ $json.caption }}",
+        "postContentMediaUrls": "={{ $json.mediaUrl }}",
+        "useNextFreeSlot": false,
+        "options": {
+          "instagramMediaType": "={{ $json.isVideo ? $('Config').first().json.instagramVideoMode : '' }}"
+        }
+      },
+      "notes": "Images post to the feed (mediaType unset). Videos use instagramVideoMode — 'reel' or 'story'."
+    },
+    {
+      "id": "pub-tw",
+      "name": "X publish",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        240
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "platform": "twitter",
+        "accountId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.twitterAccountId }}"
+        },
+        "postContentText": "={{ $json.caption }}",
+        "postContentMediaUrls": "={{ $json.mediaUrl }}",
+        "useNextFreeSlot": false,
+        "options": {}
+      },
+      "notes": "Captions over 280 characters never reach here — Fan out sends them to 'unsupported' with the exact length."
+    },
+    {
+      "id": "pub-li",
+      "name": "LinkedIn publish",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        440
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "platform": "linkedin",
+        "accountId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.linkedinAccountId }}"
+        },
+        "postContentText": "={{ $json.caption }}",
+        "postContentMediaUrls": "={{ $json.mediaUrl }}",
+        "useNextFreeSlot": false,
+        "options": {}
+      },
+      "notes": "Posts as the person who connected the account. To post to a Company Page, add 'Linkedin Page' under Options and pick it from the list."
+    },
+    {
+      "id": "pub-yt",
+      "name": "YouTube publish",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        640
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "platform": "youtube",
+        "accountId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.youtubeAccountId }}"
+        },
+        "postContentText": "={{ $json.caption }}",
+        "postContentMediaUrls": "={{ $json.mediaUrl }}",
+        "useNextFreeSlot": false,
+        "postCreateYoutubeOptionTitle": "={{ (($json.ytTitle || $json.caption).replace(/\\s+/g, ' ').trim() || 'Untitled').slice(0, 95) }}",
+        "postCreateYoutubeOptionPrivacyStatus": "={{ $json.ytPrivacy }}",
+        "postCreateYoutubeOptionShouldNotifySubscribers": false,
+        "postCreateYoutubeOptionMadeForKids": false,
+        "postCreateYoutubeOptionContainsSyntheticMedia": false,
+        "options": {}
+      },
+      "notes": "Title falls back to the first 95 characters of the caption. Privacy comes from the sheet's YouTube Privacy column, defaulted to 'private' by Prepare jobs."
+    },
+    {
+      "id": "stamp-fb",
+      "name": "Facebook submission",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        -160
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sfb-1",
+              "name": "row_number",
+              "value": "={{ $('Fan out per platform').item.json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "sfb-2",
+              "name": "platform",
+              "value": "facebook",
+              "type": "string"
+            },
+            {
+              "id": "sfb-3",
+              "name": "postSubmissionId",
+              "value": "={{ $json.postSubmissionId || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "sfb-4",
+              "name": "detail",
+              "value": "={{ $json.error ? String($json.error) : '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "stamp-ig",
+      "name": "Instagram submission",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        40
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sig-1",
+              "name": "row_number",
+              "value": "={{ $('Fan out per platform').item.json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "sig-2",
+              "name": "platform",
+              "value": "instagram",
+              "type": "string"
+            },
+            {
+              "id": "sig-3",
+              "name": "postSubmissionId",
+              "value": "={{ $json.postSubmissionId || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "sig-4",
+              "name": "detail",
+              "value": "={{ $json.error ? String($json.error) : '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "stamp-tw",
+      "name": "X submission",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        240
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "stw-1",
+              "name": "row_number",
+              "value": "={{ $('Fan out per platform').item.json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "stw-2",
+              "name": "platform",
+              "value": "twitter",
+              "type": "string"
+            },
+            {
+              "id": "stw-3",
+              "name": "postSubmissionId",
+              "value": "={{ $json.postSubmissionId || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "stw-4",
+              "name": "detail",
+              "value": "={{ $json.error ? String($json.error) : '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "stamp-li",
+      "name": "LinkedIn submission",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        440
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sli-1",
+              "name": "row_number",
+              "value": "={{ $('Fan out per platform').item.json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "sli-2",
+              "name": "platform",
+              "value": "linkedin",
+              "type": "string"
+            },
+            {
+              "id": "sli-3",
+              "name": "postSubmissionId",
+              "value": "={{ $json.postSubmissionId || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "sli-4",
+              "name": "detail",
+              "value": "={{ $json.error ? String($json.error) : '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "stamp-yt",
+      "name": "YouTube submission",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        640
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "syt-1",
+              "name": "row_number",
+              "value": "={{ $('Fan out per platform').item.json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "syt-2",
+              "name": "platform",
+              "value": "youtube",
+              "type": "string"
+            },
+            {
+              "id": "syt-3",
+              "name": "postSubmissionId",
+              "value": "={{ $json.postSubmissionId || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "syt-4",
+              "name": "detail",
+              "value": "={{ $json.error ? String($json.error) : '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "stamp-un",
+      "name": "Unsupported submission",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1240,
+        840
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "sun-1",
+              "name": "row_number",
+              "value": "={{ $json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "sun-2",
+              "name": "platform",
+              "value": "={{ $json.platform }}",
+              "type": "string"
+            },
+            {
+              "id": "sun-3",
+              "name": "postSubmissionId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "sun-4",
+              "name": "detail",
+              "value": "={{ 'skipped — ' + $json.unsupportedReason }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "merge-submissions",
+      "name": "Collect submissions",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1480,
+        360
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 6
+      }
+    },
+    {
+      "id": "publish-wait",
+      "name": "Wait for publish",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        360
+      ],
+      "webhookId": "8f2c1a64-5b71-4f0e-9d2a-autopost0012",
+      "parameters": {
+        "amount": 25,
+        "unit": "seconds"
+      },
+      "notes": "Blotato publishes asynchronously — one pause covers every platform in this run."
+    },
+    {
+      "id": "has-submission",
+      "name": "Has submission?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1880,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "hs-1",
+              "leftValue": "={{ !!$json.postSubmissionId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "notes": "Keeps rejected and skipped items away from the status check — the node hard-errors on an empty submission id."
+    },
+    {
+      "id": "blotato-status",
+      "name": "Blotato check status",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        260
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "post",
+        "operation": "get",
+        "postSubmissionId": "={{ $json.postSubmissionId }}"
+      },
+      "notes": "Returns { status: 'in-progress' | 'published' | 'failed', publicUrl, errorMessage }."
+    },
+    {
+      "id": "resolve-outcome",
+      "name": "Resolve outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        260
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Turn Blotato's status into the state that lands in the sheet.\n// Runs per item so the matching submission comes back through pairedItem.\nconst stamp = $('Collect submissions').item.json;\nconst st = $json;\n\nlet state;\nlet detail;\n\nif (st.status === 'published') {\n  state = 'posted';\n  detail = st.publicUrl || 'published';\n} else if (st.status === 'failed') {\n  state = 'failed';\n  detail = st.errorMessage || 'publish failed';\n} else if (st.error) {\n  state = 'submitted';\n  detail = 'status check failed (' + String(st.error) + '), submission ' + stamp.postSubmissionId;\n} else {\n  state = 'submitted';\n  detail = 'still in progress, submission ' + stamp.postSubmissionId;\n}\n\nreturn { json: { row_number: stamp.row_number, platform: stamp.platform, state, detail } };"
+      }
+    },
+    {
+      "id": "resolve-failed",
+      "name": "Failed outcome",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2100,
+        480
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "rf-1",
+              "name": "row_number",
+              "value": "={{ $json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "rf-2",
+              "name": "platform",
+              "value": "={{ $json.platform }}",
+              "type": "string"
+            },
+            {
+              "id": "rf-3",
+              "name": "state",
+              "value": "failed",
+              "type": "string"
+            },
+            {
+              "id": "rf-4",
+              "name": "detail",
+              "value": "={{ $json.detail || 'no submission id returned' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "merge-outcomes",
+      "name": "Collect outcomes",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2540,
+        360
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 2
+      }
+    },
+    {
+      "id": "summarize",
+      "name": "Summarize per row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2740,
+        360
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Collapse the per-platform outcomes back down to one item per sheet row.\nconst byRow = new Map();\n\nfor (const item of $input.all()) {\n  const r = item.json;\n  if (r.row_number === undefined || r.row_number === null) continue;\n  const key = Number(r.row_number);\n  if (!byRow.has(key)) byRow.set(key, []);\n  byRow.get(key).push(r);\n}\n\nconst ORDER = ['facebook', 'instagram', 'twitter', 'linkedin', 'youtube'];\n\nreturn [...byRow.entries()].map(([row_number, results]) => {\n  results.sort((a, b) => ORDER.indexOf(a.platform) - ORDER.indexOf(b.platform));\n\n  const failed = results.filter((r) => r.state === 'failed').length;\n  const pending = results.filter((r) => r.state === 'submitted').length;\n\n  let status;\n  if (failed === results.length) status = 'failed';\n  else if (failed > 0) status = 'partial';\n  else if (pending > 0) status = 'submitted';\n  else status = 'posted';\n\n  return {\n    json: {\n      row_number,\n      status,\n      result: results\n        .map((r) => `${r.platform}: ${r.state}${r.detail ? ' — ' + r.detail : ''}`)\n        .join(' | '),\n      processedAt: new Date().toISOString(),\n    },\n  };\n});"
+      }
+    },
+    {
+      "id": "invalid-result",
+      "name": "Invalid result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        100,
+        660
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Rows this backend can never publish — write the reason back so they stop\n// being picked up on every sweep.\nreturn $input.all().map((item) => ({\n  json: {\n    row_number: item.json.row_number,\n    status: 'failed',\n    result: 'Skipped — ' + item.json.problems,\n    processedAt: new Date().toISOString(),\n  },\n}));"
+      }
+    },
+    {
+      "id": "sheet-write",
+      "name": "Write status back",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2960,
+        360
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "row_number"
+          ],
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "post status": "={{ $json.status }}",
+            "result": "={{ $json.result }}",
+            "processed at": "={{ $json.processedAt }}"
+          },
+          "schema": []
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "due-check",
+      "name": "Due yet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -120,
+        360
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "due-1",
+              "leftValue": "={{ $json.isDue }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "notes": "Compares the sheet's publish time to now. Rows that aren't due yet are left alone — NOT marked processing or failed — so the next sweep re-checks them."
+    },
+    {
+      "id": "not-due",
+      "name": "Nothing to do",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -120,
+        170
+      ],
+      "parameters": {},
+      "notes": "Dead end on purpose — the row is either already handled or not due yet. Nothing is written, so the next sweep re-checks it."
+    },
+    {
+      "id": "handled-check",
+      "name": "Already handled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -560,
+        500
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "handled-1",
+              "leftValue": "={{ $json.alreadyHandled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "notes": "The `status` column stays on \"Publish\" after a post goes out, so this is what stops a published row being posted again on the next sweep. Anything in `post status` means hands off."
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get new rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get new rows": {
+      "main": [
+        [
+          {
+            "node": "Prepare jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare jobs": {
+      "main": [
+        [
+          {
+            "node": "Already handled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid row?": {
+      "main": [
+        [
+          {
+            "node": "Due yet?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark processing": {
+      "main": [
+        [
+          {
+            "node": "Blotato upload media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blotato upload media": {
+      "main": [
+        [
+          {
+            "node": "Fan out per platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan out per platform": {
+      "main": [
+        [
+          {
+            "node": "Route platform",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route platform": {
+      "main": [
+        [
+          {
+            "node": "Facebook publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Instagram publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "X publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "LinkedIn publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "YouTube publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unsupported submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook publish": {
+      "main": [
+        [
+          {
+            "node": "Facebook submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram publish": {
+      "main": [
+        [
+          {
+            "node": "Instagram submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "X publish": {
+      "main": [
+        [
+          {
+            "node": "X submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LinkedIn publish": {
+      "main": [
+        [
+          {
+            "node": "LinkedIn submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube publish": {
+      "main": [
+        [
+          {
+            "node": "YouTube submission",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Facebook submission": {
+      "main": [
+        [
+          {
+            "node": "Collect submissions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Instagram submission": {
+      "main": [
+        [
+          {
+            "node": "Collect submissions",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "X submission": {
+      "main": [
+        [
+          {
+            "node": "Collect submissions",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "LinkedIn submission": {
+      "main": [
+        [
+          {
+            "node": "Collect submissions",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "YouTube submission": {
+      "main": [
+        [
+          {
+            "node": "Collect submissions",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Unsupported submission": {
+      "main": [
+        [
+          {
+            "node": "Collect submissions",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Collect submissions": {
+      "main": [
+        [
+          {
+            "node": "Wait for publish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for publish": {
+      "main": [
+        [
+          {
+            "node": "Has submission?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has submission?": {
+      "main": [
+        [
+          {
+            "node": "Blotato check status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failed outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blotato check status": {
+      "main": [
+        [
+          {
+            "node": "Resolve outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve outcome": {
+      "main": [
+        [
+          {
+            "node": "Collect outcomes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failed outcome": {
+      "main": [
+        [
+          {
+            "node": "Collect outcomes",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Collect outcomes": {
+      "main": [
+        [
+          {
+            "node": "Summarize per row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize per row": {
+      "main": [
+        [
+          {
+            "node": "Write status back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalid result": {
+      "main": [
+        [
+          {
+            "node": "Write status back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Due yet?": {
+      "main": [
+        [
+          {
+            "node": "Mark processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing to do",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already handled?": {
+      "main": [
+        [
+          {
+            "node": "Nothing to do",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Valid row?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

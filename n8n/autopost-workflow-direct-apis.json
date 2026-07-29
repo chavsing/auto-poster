@@ -1,0 +1,843 @@
+{
+  "name": "AutoPost — publish queued sheet rows",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodes": [
+    {
+      "id": "trigger-schedule",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-1320, 340],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "trigger-webhook",
+      "name": "Submission webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-1320, 520],
+      "webhookId": "8f2c1a64-5b71-4f0e-9d2a-autopost0001",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "autopost",
+        "options": {}
+      },
+      "notes": "Optional. Ping this URL from Apps Script right after appendRow() so a submission is published immediately instead of waiting for the next minute. Body is ignored — it just kicks off the same sheet sweep."
+    },
+    {
+      "id": "config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-1100, 400],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "graphApiVersion",
+              "value": "v21.0",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "fbPageId",
+              "value": "PASTE_FACEBOOK_PAGE_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "igUserId",
+              "value": "PASTE_INSTAGRAM_BUSINESS_ACCOUNT_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-4",
+              "name": "linkedinPersonId",
+              "value": "PASTE_LINKEDIN_PERSON_ID",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "notes": "The only node you need to edit by hand. Everything downstream reads these with $('Config').first().json.*"
+    },
+    {
+      "id": "sheet-read",
+      "name": "Get new rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-880, 400],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Sheet1"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Status",
+              "lookupValue": "new"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-660, 400],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Normalise one sheet row into a job the rest of the workflow can trust.\n// Header names are matched case-insensitively against the same aliases\n// AppsScript.gs uses, so renaming a column in the sheet doesn't break this.\nconst PLATFORM_ALIASES = {\n  facebook: 'facebook', fb: 'facebook', 'facebook page': 'facebook',\n  instagram: 'instagram', ig: 'instagram', insta: 'instagram',\n  twitter: 'twitter', x: 'twitter', 'x / twitter': 'twitter', 'twitter / x': 'twitter',\n  linkedin: 'linkedin', li: 'linkedin',\n  youtube: 'youtube', yt: 'youtube', shorts: 'youtube',\n};\nconst KNOWN = ['facebook', 'instagram', 'twitter', 'linkedin', 'youtube'];\n\nfunction pick(row, names) {\n  for (const name of names) {\n    const key = Object.keys(row).find((k) => k.trim().toLowerCase() === name);\n    if (key && row[key] !== '' && row[key] !== null && row[key] !== undefined) return row[key];\n  }\n  return '';\n}\n\nreturn $input.all().map((item, i) => {\n  const row = item.json;\n\n  const driveUrl = String(pick(row, ['gdrive url', 'drive url', 'google drive url', 'gdrive', 'url', 'link', 'media']));\n  let fileId = String(pick(row, ['file id', 'fileid', 'drive file id', 'gdrive id']));\n  if (!fileId) {\n    const m = driveUrl.match(/\\/d\\/([a-zA-Z0-9_-]{10,})/) || driveUrl.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);\n    fileId = m ? m[1] : '';\n  }\n\n  const caption = String(pick(row, ['caption', 'text', 'post caption', 'message', 'content']));\n\n  const platforms = [...new Set(\n    String(pick(row, ['platforms', 'channels', 'accounts', 'social']))\n      .split(/[,;|]/)\n      .map((s) => s.trim().toLowerCase())\n      .filter(Boolean)\n      .map((s) => PLATFORM_ALIASES[s] || s)\n      .filter((p) => KNOWN.includes(p))\n  )];\n\n  const problems = [];\n  if (!fileId) problems.push('no Google Drive file id');\n  if (!caption) problems.push('empty caption');\n  if (!platforms.length) problems.push('no recognised platforms');\n\n  return {\n    json: {\n      row_number: row.row_number,\n      driveUrl,\n      fileId,\n      caption,\n      platforms,\n      ytTitle: String(pick(row, ['youtube title', 'yt title', 'video title', 'title'])),\n      ytPrivacy: String(pick(row, ['youtube privacy', 'yt privacy', 'visibility', 'privacy'])) || 'private',\n      valid: problems.length === 0,\n      problems: problems.join('; '),\n    },\n    pairedItem: { item: i },\n  };\n});"
+      }
+    },
+    {
+      "id": "valid-check",
+      "name": "Valid row?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-440, 400],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid-1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "mark-processing",
+      "name": "Mark processing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [-220, 280],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": ["row_number"],
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Status": "processing"
+          },
+          "schema": []
+        },
+        "options": {}
+      },
+      "notes": "Claims the row so an overlapping run can't pick it up twice."
+    },
+    {
+      "id": "download",
+      "name": "Download media",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [0, 280],
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Prepare jobs').item.json.fileId }}"
+        },
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      }
+    },
+    {
+      "id": "fanout",
+      "name": "Fan out per platform",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 280],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One row in -> one item per selected platform out, each carrying the\n// downloaded media as binary. Combinations the connected nodes genuinely\n// cannot publish are routed to 'unsupported' rather than silently posting\n// something the user didn't ask for.\nconst jobs = $('Prepare jobs').all().filter((i) => i.json.valid);\nconst out = [];\n\n$input.all().forEach((item, i) => {\n  const job = jobs[i] ? jobs[i].json : {};\n  const bin = (item.binary && item.binary.data) || {};\n  const mimeType = bin.mimeType || '';\n  const isVideo = mimeType.startsWith('video/');\n  const isImage = mimeType.startsWith('image/');\n\n  // Instagram fetches media over the public internet — it never sees our binary.\n  const publicUrl = isImage\n    ? `https://lh3.googleusercontent.com/d/${job.fileId}`\n    : `https://drive.google.com/uc?export=download&id=${job.fileId}`;\n\n  for (const platform of job.platforms || []) {\n    let unsupportedReason = '';\n    if (platform === 'youtube' && !isVideo) {\n      unsupportedReason = 'YouTube accepts video files only';\n    }\n    if (platform === 'linkedin' && isVideo) {\n      unsupportedReason = 'the LinkedIn node uploads images only — video needs the LinkedIn video upload API';\n    }\n    if (!isVideo && !isImage) {\n      unsupportedReason = `unsupported media type \"${mimeType || 'unknown'}\"`;\n    }\n\n    out.push({\n      json: {\n        ...job,\n        platform,\n        route: unsupportedReason ? 'unsupported' : platform,\n        unsupportedReason,\n        mimeType,\n        isVideo,\n        isImage,\n        publicUrl,\n        fileName: bin.fileName || 'media',\n      },\n      binary: item.binary,\n      pairedItem: { item: i },\n    });\n  }\n});\n\nreturn out;"
+      }
+    },
+    {
+      "id": "route",
+      "name": "Route platform",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [440, 280],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "r-fb",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "facebook",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "facebook"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "r-ig",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "instagram",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "instagram"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "r-tw",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "twitter",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "twitter"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "r-li",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "linkedin",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "linkedin"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "r-yt",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "youtube",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "youtube"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 },
+                "conditions": [
+                  {
+                    "id": "r-un",
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "unsupported",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "unsupported"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+
+    {
+      "id": "fb-is-video",
+      "name": "FB is video?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, -320],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose", "version": 2 },
+          "conditions": [
+            {
+              "id": "fbv-1",
+              "leftValue": "={{ $json.isVideo }}",
+              "rightValue": "",
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "fb-video",
+      "name": "FB video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, -400],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph-video.facebook.com/{{ $('Config').first().json.graphApiVersion }}/{{ $('Config').first().json.fbPageId }}/videos",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "source",
+              "inputDataFieldName": "data"
+            },
+            {
+              "parameterType": "formData",
+              "name": "description",
+              "value": "={{ $json.caption }}"
+            }
+          ]
+        },
+        "options": { "timeout": 300000 }
+      }
+    },
+    {
+      "id": "fb-photo",
+      "name": "FB photo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [920, -240],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graphApiVersion }}/{{ $('Config').first().json.fbPageId }}/photos",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "source",
+              "inputDataFieldName": "data"
+            },
+            {
+              "parameterType": "formData",
+              "name": "caption",
+              "value": "={{ $json.caption }}"
+            }
+          ]
+        },
+        "options": { "timeout": 300000 }
+      }
+    },
+    {
+      "id": "fb-result",
+      "name": "FB result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1140, -320],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "fbr-1", "name": "row_number", "value": "={{ $('Fan out per platform').item.json.row_number }}", "type": "number" },
+            { "id": "fbr-2", "name": "platform", "value": "facebook", "type": "string" },
+            { "id": "fbr-3", "name": "ok", "value": "={{ !$json.error }}", "type": "boolean" },
+            { "id": "fbr-4", "name": "detail", "value": "={{ $json.error ? String($json.error.message || $json.error) : ('post ' + ($json.post_id || $json.id || '')) }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "ig-container",
+      "name": "IG create container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, -80],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graphApiVersion }}/{{ $('Config').first().json.igUserId }}/media",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "caption", "value": "={{ $json.caption }}" },
+            { "name": "media_type", "value": "={{ $json.isVideo ? 'REELS' : 'IMAGE' }}" },
+            { "name": "image_url", "value": "={{ $json.isVideo ? undefined : $json.publicUrl }}" },
+            { "name": "video_url", "value": "={{ $json.isVideo ? $json.publicUrl : undefined }}" }
+          ]
+        },
+        "options": { "timeout": 120000 }
+      },
+      "notes": "Instagram downloads the media itself, so the Drive file must be shared 'anyone with the link'. Reels in particular are picky about Drive URLs — see the README."
+    },
+    {
+      "id": "ig-wait",
+      "name": "Wait for IG",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [880, -80],
+      "webhookId": "8f2c1a64-5b71-4f0e-9d2a-autopost0002",
+      "parameters": {
+        "amount": 25,
+        "unit": "seconds"
+      },
+      "notes": "Gives Instagram time to fetch and transcode the container before we publish it."
+    },
+    {
+      "id": "ig-publish",
+      "name": "IG publish",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, -80],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graphApiVersion }}/{{ $('Config').first().json.igUserId }}/media_publish",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "creation_id", "value": "={{ $('IG create container').item.json.id }}" }
+          ]
+        },
+        "options": { "timeout": 120000 }
+      }
+    },
+    {
+      "id": "ig-result",
+      "name": "IG result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1240, -80],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "igr-1", "name": "row_number", "value": "={{ $('Fan out per platform').item.json.row_number }}", "type": "number" },
+            { "id": "igr-2", "name": "platform", "value": "instagram", "type": "string" },
+            { "id": "igr-3", "name": "ok", "value": "={{ !$json.error && !!$json.id }}", "type": "boolean" },
+            { "id": "igr-4", "name": "detail", "value": "={{ $json.error ? String($json.error.message || $json.error) : ('post ' + ($json.id || '')) }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "x-upload",
+      "name": "X upload media",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 160],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://upload.twitter.com/1.1/media/upload.json",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "twitterOAuth1Api",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "media",
+              "inputDataFieldName": "data"
+            },
+            {
+              "parameterType": "formData",
+              "name": "media_category",
+              "value": "={{ $json.isVideo ? 'tweet_video' : 'tweet_image' }}"
+            }
+          ]
+        },
+        "options": { "timeout": 300000 }
+      },
+      "notes": "Single-request upload. Fine for images and small videos; anything over ~5 MB needs X's chunked INIT/APPEND/FINALIZE flow (see README)."
+    },
+    {
+      "id": "x-tweet",
+      "name": "X create tweet",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 160],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twitter.com/2/tweets",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "twitterOAuth1Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Fan out per platform').item.json.caption.slice(0, 280), media: { media_ids: [String($json.media_id_string || $json.media_id)] } }) }}",
+        "options": { "timeout": 120000 }
+      }
+    },
+    {
+      "id": "x-result",
+      "name": "X result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1100, 160],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "xr-1", "name": "row_number", "value": "={{ $('Fan out per platform').item.json.row_number }}", "type": "number" },
+            { "id": "xr-2", "name": "platform", "value": "twitter", "type": "string" },
+            { "id": "xr-3", "name": "ok", "value": "={{ !$json.error && !!($json.data && $json.data.id) }}", "type": "boolean" },
+            { "id": "xr-4", "name": "detail", "value": "={{ $json.error ? String($json.error.message || $json.error) : ('tweet ' + (($json.data && $json.data.id) || '')) }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "li-post",
+      "name": "LinkedIn post",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [700, 380],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "postAs": "person",
+        "person": "={{ $('Config').first().json.linkedinPersonId }}",
+        "text": "={{ $json.caption }}",
+        "shareMediaCategory": "IMAGE",
+        "binaryPropertyName": "data",
+        "additionalFields": {}
+      }
+    },
+    {
+      "id": "li-result",
+      "name": "LinkedIn result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 380],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "lir-1", "name": "row_number", "value": "={{ $('Fan out per platform').item.json.row_number }}", "type": "number" },
+            { "id": "lir-2", "name": "platform", "value": "linkedin", "type": "string" },
+            { "id": "lir-3", "name": "ok", "value": "={{ !$json.error }}", "type": "boolean" },
+            { "id": "lir-4", "name": "detail", "value": "={{ $json.error ? String($json.error.message || $json.error) : ('post ' + ($json.id || $json.urn || '')) }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "yt-upload",
+      "name": "YouTube upload",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 1,
+      "position": [700, 600],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{ ($json.ytTitle || $json.caption).replace(/\\s+/g, ' ').trim().slice(0, 95) }}",
+        "regionCode": "US",
+        "categoryId": "22",
+        "options": {
+          "description": "={{ $json.caption }}",
+          "privacyStatus": "={{ $json.ytPrivacy }}"
+        }
+      }
+    },
+    {
+      "id": "yt-result",
+      "name": "YouTube result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 600],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "ytr-1", "name": "row_number", "value": "={{ $('Fan out per platform').item.json.row_number }}", "type": "number" },
+            { "id": "ytr-2", "name": "platform", "value": "youtube", "type": "string" },
+            { "id": "ytr-3", "name": "ok", "value": "={{ !$json.error && !!$json.id }}", "type": "boolean" },
+            { "id": "ytr-4", "name": "detail", "value": "={{ $json.error ? String($json.error.message || $json.error) : ('https://youtu.be/' + ($json.id && $json.id.videoId ? $json.id.videoId : $json.id)) }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "unsupported-result",
+      "name": "Unsupported result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [700, 800],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "unr-1", "name": "row_number", "value": "={{ $json.row_number }}", "type": "number" },
+            { "id": "unr-2", "name": "platform", "value": "={{ $json.platform }}", "type": "string" },
+            { "id": "unr-3", "name": "ok", "value": "false", "type": "boolean" },
+            { "id": "unr-4", "name": "detail", "value": "={{ 'skipped — ' + $json.unsupportedReason }}", "type": "string" }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "merge",
+      "name": "Collect results",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1480, 280],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 6
+      }
+    },
+    {
+      "id": "summarize",
+      "name": "Summarize per row",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 280],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Collapse the per-platform results back down to one item per sheet row.\nconst byRow = new Map();\n\nfor (const item of $input.all()) {\n  const r = item.json;\n  if (r.row_number === undefined || r.row_number === null) continue;\n  const key = Number(r.row_number);\n  if (!byRow.has(key)) byRow.set(key, []);\n  byRow.get(key).push(r);\n}\n\nreturn [...byRow.entries()].map(([row_number, results]) => {\n  const failed = results.filter((r) => !r.ok);\n  const status = failed.length === 0\n    ? 'posted'\n    : failed.length === results.length ? 'failed' : 'partial';\n\n  return {\n    json: {\n      row_number,\n      status,\n      result: results\n        .map((r) => `${r.platform}: ${r.ok ? 'ok' : 'FAILED'}${r.detail ? ' — ' + r.detail : ''}`)\n        .join(' | '),\n      processedAt: new Date().toISOString(),\n    },\n  };\n});"
+      }
+    },
+    {
+      "id": "invalid-result",
+      "name": "Invalid result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-220, 620],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Rows that can never be published — write the reason back so they stop\n// being picked up on every sweep.\nreturn $input.all().map((item) => ({\n  json: {\n    row_number: item.json.row_number,\n    status: 'failed',\n    result: 'Skipped — ' + item.json.problems,\n    processedAt: new Date().toISOString(),\n  },\n}));"
+      }
+    },
+    {
+      "id": "sheet-write",
+      "name": "Write status back",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1920, 280],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": ["row_number"],
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Status": "={{ $json.status }}",
+            "Result": "={{ $json.result }}",
+            "Processed At": "={{ $json.processedAt }}"
+          },
+          "schema": []
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Submission webhook": {
+      "main": [[{ "node": "Config", "type": "main", "index": 0 }]]
+    },
+    "Config": {
+      "main": [[{ "node": "Get new rows", "type": "main", "index": 0 }]]
+    },
+    "Get new rows": {
+      "main": [[{ "node": "Prepare jobs", "type": "main", "index": 0 }]]
+    },
+    "Prepare jobs": {
+      "main": [[{ "node": "Valid row?", "type": "main", "index": 0 }]]
+    },
+    "Valid row?": {
+      "main": [
+        [{ "node": "Mark processing", "type": "main", "index": 0 }],
+        [{ "node": "Invalid result", "type": "main", "index": 0 }]
+      ]
+    },
+    "Mark processing": {
+      "main": [[{ "node": "Download media", "type": "main", "index": 0 }]]
+    },
+    "Download media": {
+      "main": [[{ "node": "Fan out per platform", "type": "main", "index": 0 }]]
+    },
+    "Fan out per platform": {
+      "main": [[{ "node": "Route platform", "type": "main", "index": 0 }]]
+    },
+    "Route platform": {
+      "main": [
+        [{ "node": "FB is video?", "type": "main", "index": 0 }],
+        [{ "node": "IG create container", "type": "main", "index": 0 }],
+        [{ "node": "X upload media", "type": "main", "index": 0 }],
+        [{ "node": "LinkedIn post", "type": "main", "index": 0 }],
+        [{ "node": "YouTube upload", "type": "main", "index": 0 }],
+        [{ "node": "Unsupported result", "type": "main", "index": 0 }]
+      ]
+    },
+    "FB is video?": {
+      "main": [
+        [{ "node": "FB video", "type": "main", "index": 0 }],
+        [{ "node": "FB photo", "type": "main", "index": 0 }]
+      ]
+    },
+    "FB video": {
+      "main": [[{ "node": "FB result", "type": "main", "index": 0 }]]
+    },
+    "FB photo": {
+      "main": [[{ "node": "FB result", "type": "main", "index": 0 }]]
+    },
+    "FB result": {
+      "main": [[{ "node": "Collect results", "type": "main", "index": 0 }]]
+    },
+    "IG create container": {
+      "main": [[{ "node": "Wait for IG", "type": "main", "index": 0 }]]
+    },
+    "Wait for IG": {
+      "main": [[{ "node": "IG publish", "type": "main", "index": 0 }]]
+    },
+    "IG publish": {
+      "main": [[{ "node": "IG result", "type": "main", "index": 0 }]]
+    },
+    "IG result": {
+      "main": [[{ "node": "Collect results", "type": "main", "index": 1 }]]
+    },
+    "X upload media": {
+      "main": [[{ "node": "X create tweet", "type": "main", "index": 0 }]]
+    },
+    "X create tweet": {
+      "main": [[{ "node": "X result", "type": "main", "index": 0 }]]
+    },
+    "X result": {
+      "main": [[{ "node": "Collect results", "type": "main", "index": 2 }]]
+    },
+    "LinkedIn post": {
+      "main": [[{ "node": "LinkedIn result", "type": "main", "index": 0 }]]
+    },
+    "LinkedIn result": {
+      "main": [[{ "node": "Collect results", "type": "main", "index": 3 }]]
+    },
+    "YouTube upload": {
+      "main": [[{ "node": "YouTube result", "type": "main", "index": 0 }]]
+    },
+    "YouTube result": {
+      "main": [[{ "node": "Collect results", "type": "main", "index": 4 }]]
+    },
+    "Unsupported result": {
+      "main": [[{ "node": "Collect results", "type": "main", "index": 5 }]]
+    },
+    "Collect results": {
+      "main": [[{ "node": "Summarize per row", "type": "main", "index": 0 }]]
+    },
+    "Summarize per row": {
+      "main": [[{ "node": "Write status back", "type": "main", "index": 0 }]]
+    },
+    "Invalid result": {
+      "main": [[{ "node": "Write status back", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {}
+}

@@ -1,0 +1,863 @@
+{
+  "name": "AutoPost — publish to Facebook via Blotato",
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "nodes": [
+    {
+      "id": "trigger-schedule",
+      "name": "Every minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1100,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "config",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -880,
+        380
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-1",
+              "name": "blotatoAccountId",
+              "value": "PASTE_BLOTATO_ACCOUNT_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-2",
+              "name": "blotatoPageId",
+              "value": "PASTE_FACEBOOK_PAGE_ID",
+              "type": "string"
+            },
+            {
+              "id": "cfg-3",
+              "name": "facebookVideoMode",
+              "value": "reel",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "notes": "The only node you edit by hand.\nblotatoAccountId / blotatoPageId — or clear the expressions on the Blotato publish node and pick both from its dropdowns instead.\nfacebookVideoMode — 'reel' or 'video'. Ignored for image posts."
+    },
+    {
+      "id": "sheet-read",
+      "name": "Get new rows",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -660,
+        380
+      ],
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Sheet1"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "Publish"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "notes": "Only rows a human has moved to \"Publish\". n8n never writes this column."
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -440,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Normalise one sheet row into a Facebook job.\n// Column headers are matched case-insensitively, so renaming one in the sheet\n// doesn't break this.\n\n// Canonical platform ids. Used for BOTH layouts: a TRUE/FALSE column per\n// platform (what this sheet uses) and a single comma-separated column.\nconst PLATFORM_ALIASES = {\n  facebook: 'facebook', fb: 'facebook', 'facebook page': 'facebook',\n  instagram: 'instagram', ig: 'instagram', insta: 'instagram',\n  twitter: 'twitter', x: 'twitter', 'x / twitter': 'twitter', 'twitter / x': 'twitter',\n  linkedin: 'linkedin', li: 'linkedin',\n  youtube: 'youtube', yt: 'youtube', shorts: 'youtube',\n};\n\nfunction pick(row, names) {\n  for (const name of names) {\n    const key = Object.keys(row).find((k) => k.trim().toLowerCase() === name);\n    if (key && row[key] !== '' && row[key] !== null && row[key] !== undefined) return row[key];\n  }\n  return '';\n}\n\n// A ticked checkbox arrives as a real boolean; a typed one as text.\nfunction truthy(v) {\n  if (v === true) return true;\n  const s = String(v).trim().toLowerCase();\n  return s === 'true' || s === 'yes' || s === 'y' || s === '1' || s === 'x';\n}\n\nfunction platformsFrom(row) {\n  const found = new Set();\n  // (a) one TRUE column per platform\n  for (const key of Object.keys(row)) {\n    const canon = PLATFORM_ALIASES[key.trim().toLowerCase()];\n    if (canon && truthy(row[key])) found.add(canon);\n  }\n  // (b) or a single comma-separated column, if the sheet ever grows one\n  String(pick(row, ['platforms', 'channels', 'accounts', 'social']))\n    .split(/[,;|]/)\n    .map((s) => s.trim().toLowerCase())\n    .filter(Boolean)\n    .forEach((s) => { const c = PLATFORM_ALIASES[s]; if (c) found.add(c); });\n  return [...found];\n}\n\n// Google Sheets can hand back a schedule three different ways depending on how\n// the cell was formatted, so accept all of them rather than trust one.\nfunction parseWhen(v) {\n  if (v === '' || v === null || v === undefined) return null;\n  if (v instanceof Date) return v;\n  if (typeof v === 'number') {\n    // Sheets serial date: days since 1899-12-30, in the spreadsheet's timezone\n    return new Date(Math.round((v - 25569) * 86400000));\n  }\n  const d = new Date(String(v).trim());\n  return isNaN(d.getTime()) ? null : d;\n}\n\nfunction readCommon(row) {\n  const driveUrl = String(pick(row, ['gdrive url', 'drive url', 'google drive url', 'gdrive', 'url', 'link', 'media']));\n  let fileId = String(pick(row, ['file id', 'fileid', 'drive file id', 'gdrive id']));\n  if (!fileId) {\n    const m = driveUrl.match(/\\/d\\/([a-zA-Z0-9_-]{10,})/) || driveUrl.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);\n    fileId = m ? m[1] : '';\n  }\n\n  // Blotato's Media > Upload fetches this URL itself, so it has to be public.\n  // If an image ever fails, try https://lh3.googleusercontent.com/d/<fileId>.\n  const mediaUrl = fileId ? `https://drive.google.com/uc?export=download&id=${fileId}` : '';\n\n  // n8n owns this column. Anything in it means a previous run already claimed\n  // or finished the row — never touch it again, or an approved row would be\n  // re-published on every single sweep.\n  const alreadyHandled = String(pick(row, ['post status', 'automation status', 'publish status'])).trim() !== '';\n\n  // Blank publish time means \"go on the next sweep\"; unreadable is an error,\n  // not a licence to publish immediately.\n  const scheduledRaw = pick(row, ['post at', 'publish at', 'schedule', 'scheduled', 'scheduled at', 'post date', 'publish date']);\n  const hasSchedule = scheduledRaw !== '' && scheduledRaw !== null && scheduledRaw !== undefined;\n  const dueAt = hasSchedule ? parseWhen(scheduledRaw) : null;\n  const badSchedule = hasSchedule && !dueAt;\n  const isDue = !hasSchedule || (!!dueAt && dueAt.getTime() <= Date.now());\n\n  return {\n    driveUrl,\n    fileId,\n    mediaUrl,\n    caption: String(pick(row, ['caption', 'text', 'post caption', 'message', 'content'])),\n    platforms: platformsFrom(row),\n    alreadyHandled,\n    dueAt,\n    badSchedule,\n    isDue,\n  };\n}\n\nreturn $input.all().map((item, i) => {\n  const row = item.json;\n  const c = readCommon(row);\n\n  const targetsFacebook = c.platforms.includes('facebook');\n  const ignored = c.platforms.filter((p) => p !== 'facebook');\n\n  const problems = [];\n  if (!c.fileId) problems.push('no Google Drive file id');\n  if (!c.caption) problems.push('empty caption');\n  if (c.badSchedule) problems.push('unreadable publish time');\n\n  let valid = true;\n  let skipStatus = '';\n  let skipReason = '';\n\n  if (!targetsFacebook) {\n    valid = false;\n    skipStatus = 'skipped';\n    skipReason = c.platforms.length\n      ? `row targets ${c.platforms.join(', ')} — this backend only publishes to Facebook`\n      : 'no platforms ticked';\n  } else if (problems.length) {\n    valid = false;\n    skipStatus = 'failed';\n    skipReason = problems.join('; ');\n  }\n\n  return {\n    json: {\n      row_number: row.row_number,\n      driveUrl: c.driveUrl,\n      fileId: c.fileId,\n      caption: c.caption,\n      platforms: c.platforms,\n      ignored,\n      mediaUrl: c.mediaUrl,\n      scheduledAt: c.dueAt ? c.dueAt.toISOString() : '',\n      alreadyHandled: c.alreadyHandled,\n      isDue: c.isDue,\n      valid,\n      skipStatus,\n      skipReason,\n    },\n    pairedItem: { item: i },\n  };\n});"
+      }
+    },
+    {
+      "id": "valid-check",
+      "name": "Valid row?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        380
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "valid-1",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "mark-processing",
+      "name": "Mark processing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        440,
+        240
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "row_number"
+          ],
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "post status": "processing"
+          },
+          "schema": []
+        },
+        "options": {}
+      },
+      "notes": "Claims the row in the automation column so an overlapping sweep can't publish it twice. The human `status` column is left alone."
+    },
+    {
+      "id": "blotato-media",
+      "name": "Blotato upload media",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        660,
+        240
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "media",
+        "operation": "upload",
+        "useBinaryData": false,
+        "mediaUrl": "={{ $('Prepare jobs').item.json.mediaUrl }}"
+      },
+      "notes": "URL upload, not binary — the node's own note says binary is size-capped and to use a URL for Google Drive files (up to ~60 MB). Returns { url } on Blotato's CDN."
+    },
+    {
+      "id": "build-payload",
+      "name": "Build post payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        240
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Blotato re-hosts the file keeping its real extension, so the URL it returns\n// tells us whether this is a video — which decides target.mediaType.\nconst VIDEO_EXT = /\\.(mp4|mov|m4v|webm|mkv|avi)(\\?|$)/i;\nconst jobs = $('Prepare jobs').all().filter((j) => j.json.valid);\n\nreturn $input.all().map((item, i) => {\n  const job = jobs[i] ? jobs[i].json : {};\n  const res = item.json || {};\n\n  const uploadedUrl = res.url ? String(res.url) : '';\n  // The Blotato node reports failures as a plain string on `error`.\n  const uploadError = res.error\n    ? String(res.error.message || res.error)\n    : (uploadedUrl ? '' : 'Blotato returned no media URL — check the Drive file is shared \"anyone with the link\"');\n\n  return {\n    json: {\n      ...job,\n      mediaUrl: uploadedUrl,\n      isVideo: VIDEO_EXT.test(uploadedUrl),\n      uploadOk: !!uploadedUrl && !res.error,\n      uploadError,\n    },\n    pairedItem: { item: i },\n  };\n});"
+      }
+    },
+    {
+      "id": "media-check",
+      "name": "Media ready?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1100,
+        240
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "media-1",
+              "leftValue": "={{ $json.uploadOk }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "blotato-publish",
+      "name": "Blotato publish",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        120
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "post",
+        "operation": "create",
+        "platform": "facebook",
+        "accountId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.blotatoAccountId }}"
+        },
+        "facebookPageId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Config').first().json.blotatoPageId }}"
+        },
+        "postContentText": "={{ $json.caption }}",
+        "postContentMediaUrls": "={{ $json.mediaUrl }}",
+        "useNextFreeSlot": false,
+        "options": {
+          "facebookMediaType": "={{ $json.isVideo ? $('Config').first().json.facebookVideoMode : '' }}"
+        }
+      },
+      "notes": "facebookMediaType resolves to '' for images, which the node treats as unset — mediaType only applies to video. Returns { postSubmissionId }."
+    },
+    {
+      "id": "submitted-check",
+      "name": "Submitted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        120
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "sub-1",
+              "leftValue": "={{ !!$json.postSubmissionId }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "publish-wait",
+      "name": "Wait for publish",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        20
+      ],
+      "webhookId": "8f2c1a64-5b71-4f0e-9d2a-autopost0002",
+      "parameters": {
+        "amount": 20,
+        "unit": "seconds"
+      },
+      "notes": "Blotato publishes asynchronously — give it a moment before asking for the outcome."
+    },
+    {
+      "id": "blotato-status",
+      "name": "Blotato check status",
+      "type": "@blotato/n8n-nodes-blotato.blotato",
+      "typeVersion": 2,
+      "position": [
+        1960,
+        20
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "resource": "post",
+        "operation": "get",
+        "postSubmissionId": "={{ $('Blotato publish').item.json.postSubmissionId }}"
+      },
+      "notes": "Returns { status: 'in-progress' | 'published' | 'failed', publicUrl, errorMessage }."
+    },
+    {
+      "id": "post-result",
+      "name": "Post result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2180,
+        20
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pr-1",
+              "name": "row_number",
+              "value": "={{ $('Build post payload').item.json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "pr-2",
+              "name": "status",
+              "value": "={{ $json.status === 'published' ? 'posted' : ($json.status === 'failed' ? 'failed' : 'submitted') }}",
+              "type": "string"
+            },
+            {
+              "id": "pr-3",
+              "name": "result",
+              "value": "={{ (() => { const ig = $('Build post payload').item.json.ignored || []; const extra = ig.length ? ' | ignored platforms: ' + ig.join(', ') : ''; const sub = $('Blotato publish').item.json.postSubmissionId || ''; if ($json.status === 'published') return 'facebook: posted — ' + ($json.publicUrl || 'no url returned') + extra; if ($json.status === 'failed') return 'facebook: FAILED — ' + ($json.errorMessage || 'no reason given') + extra; if ($json.error) return 'facebook: submitted — status check failed (' + String($json.error) + '), submission ' + sub + extra; return 'facebook: submitted — still in progress, submission ' + sub + extra; })() }}",
+              "type": "string"
+            },
+            {
+              "id": "pr-4",
+              "name": "processedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "publish-failed",
+      "name": "Publish failed result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1760,
+        220
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "pf-1",
+              "name": "row_number",
+              "value": "={{ $('Build post payload').item.json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "pf-2",
+              "name": "status",
+              "value": "failed",
+              "type": "string"
+            },
+            {
+              "id": "pf-3",
+              "name": "result",
+              "value": "={{ 'facebook: FAILED — ' + String($json.error || 'Blotato rejected the post') }}",
+              "type": "string"
+            },
+            {
+              "id": "pf-4",
+              "name": "processedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "upload-failed",
+      "name": "Upload failed result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1320,
+        400
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "uf-1",
+              "name": "row_number",
+              "value": "={{ $json.row_number }}",
+              "type": "number"
+            },
+            {
+              "id": "uf-2",
+              "name": "status",
+              "value": "failed",
+              "type": "string"
+            },
+            {
+              "id": "uf-3",
+              "name": "result",
+              "value": "={{ 'facebook: FAILED — media upload: ' + $json.uploadError }}",
+              "type": "string"
+            },
+            {
+              "id": "uf-4",
+              "name": "processedAt",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "invalid-result",
+      "name": "Invalid result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Rows this backend can never publish — write the reason back so they stop\n// being picked up on every sweep.\nreturn $input.all().map((item) => ({\n  json: {\n    row_number: item.json.row_number,\n    status: item.json.skipStatus || 'failed',\n    result: (item.json.skipStatus === 'skipped' ? 'Skipped — ' : 'Failed — ') + item.json.skipReason,\n    processedAt: new Date().toISOString(),\n  },\n}));"
+      }
+    },
+    {
+      "id": "sheet-write",
+      "name": "Write status back",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2420,
+        300
+      ],
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "row_number"
+          ],
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "post status": "={{ $json.status }}",
+            "result": "={{ $json.result }}",
+            "processed at": "={{ $json.processedAt }}"
+          },
+          "schema": []
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "due-check",
+      "name": "Due yet?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        240
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "due-1",
+              "leftValue": "={{ $json.isDue }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "notes": "Compares the sheet's publish time to now. Rows that aren't due yet are left alone — NOT marked processing or failed — so the next sweep re-checks them."
+    },
+    {
+      "id": "not-due",
+      "name": "Nothing to do",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        220,
+        60
+      ],
+      "parameters": {},
+      "notes": "Dead end on purpose — the row is either already handled or not due yet. Nothing is written, so the next sweep re-checks it."
+    },
+    {
+      "id": "handled-check",
+      "name": "Already handled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -220,
+        380
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "handled-1",
+              "leftValue": "={{ $json.alreadyHandled }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "notes": "The `status` column stays on \"Publish\" after a post goes out, so this is what stops a published row being posted again on the next sweep. Anything in `post status` means hands off."
+    }
+  ],
+  "connections": {
+    "Every minute": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Get new rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get new rows": {
+      "main": [
+        [
+          {
+            "node": "Prepare jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare jobs": {
+      "main": [
+        [
+          {
+            "node": "Already handled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid row?": {
+      "main": [
+        [
+          {
+            "node": "Due yet?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark processing": {
+      "main": [
+        [
+          {
+            "node": "Blotato upload media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blotato upload media": {
+      "main": [
+        [
+          {
+            "node": "Build post payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build post payload": {
+      "main": [
+        [
+          {
+            "node": "Media ready?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Media ready?": {
+      "main": [
+        [
+          {
+            "node": "Blotato publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Upload failed result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blotato publish": {
+      "main": [
+        [
+          {
+            "node": "Submitted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submitted?": {
+      "main": [
+        [
+          {
+            "node": "Wait for publish",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publish failed result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait for publish": {
+      "main": [
+        [
+          {
+            "node": "Blotato check status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blotato check status": {
+      "main": [
+        [
+          {
+            "node": "Post result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post result": {
+      "main": [
+        [
+          {
+            "node": "Write status back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish failed result": {
+      "main": [
+        [
+          {
+            "node": "Write status back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload failed result": {
+      "main": [
+        [
+          {
+            "node": "Write status back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Invalid result": {
+      "main": [
+        [
+          {
+            "node": "Write status back",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Due yet?": {
+      "main": [
+        [
+          {
+            "node": "Mark processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing to do",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already handled?": {
+      "main": [
+        [
+          {
+            "node": "Nothing to do",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Valid row?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {}
+}

@@ -157,7 +157,7 @@
   label.lab{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:13px;font-weight:650;margin-bottom:9px}
   .hint{color:var(--muted);font-weight:500;font-size:12px;font-variant-numeric:tabular-nums}
 
-  input[type=text],input[type=url],textarea,select{
+  input[type=text],input[type=url],input[type=date],input[type=time],textarea,select{
     width:100%;background:rgba(0,0,0,.3);border:1px solid var(--stroke);
     border-radius:13px;color:var(--text);padding:13px 15px;min-height:48px;font:inherit;font-size:15px;outline:none;
     transition:border-color var(--t) var(--ease-out),box-shadow var(--t) var(--ease-out),background var(--t) var(--ease-out);
@@ -254,6 +254,24 @@
   .extras.show{max-height:260px;opacity:1;margin-top:14px;padding:17px;border-color:var(--stroke)}
   .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
   @media(max-width:640px){.row{grid-template-columns:1fr}}
+
+  /* date/time pickers: match the other inputs, keep the native icon visible on dark */
+  input[type=date],input[type=time]{cursor:pointer;font-variant-numeric:tabular-nums}
+  /* the page declares color-scheme:dark, so the native indicator already renders
+     light — inverting it would paint it black on a black field */
+  input[type=date]::-webkit-calendar-picker-indicator,
+  input[type=time]::-webkit-calendar-picker-indicator{
+    opacity:.75;cursor:pointer;padding:2px;border-radius:5px;
+    transition:opacity var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  input[type=date]:hover::-webkit-calendar-picker-indicator,
+  input[type=time]:hover::-webkit-calendar-picker-indicator{opacity:1;background:rgba(255,255,255,.12)}
+  .sched-note{
+    margin:9px 0 0;font-size:12.5px;color:var(--muted);min-height:1.2em;
+    display:flex;align-items:center;gap:7px;
+  }
+  .sched-note.on{animation:rise .26s var(--ease-out)}
+  .sched-note b{color:var(--text);font-weight:640}
 
   .counts{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
   .tag{
@@ -380,16 +398,12 @@
       <span class="mark"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>
       AutoPost
     </div>
-    <button class="ghost" id="btnPreview" type="button">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
-      View payload
-    </button>
   </header>
 
   <div class="hero">
     <div class="pill rv" style="--d:70ms"><span class="dot"></span> Connected to your Google Sheet</div>
     <h1 class="rv" style="--d:130ms">Publish once.<br/><span class="grad">Post everywhere.</span></h1>
-    <p class="sub rv" style="--d:190ms">Drop a Google Drive link, write your caption, pick your channels. Every submission lands in your sheet, ready to post.</p>
+    <p class="sub rv" style="--d:190ms">Drop a Google Drive link, write your caption, pick your channels and the time to go live. Every submission lands in your sheet and publishes on schedule.</p>
   </div>
 
   <form class="card rv" id="form" style="--d:250ms" novalidate>
@@ -398,7 +412,7 @@
       <label class="lab" for="drive">Google Drive URL <span class="hint">image or video — shared "anyone with the link"</span></label>
       <input type="url" id="drive" name="drive" inputmode="url" autocomplete="off" aria-describedby="driveErr"
              placeholder="https://drive.google.com/file/d/1AbC.../view?usp=sharing" />
-      <p class="err-msg" id="driveErr" role="alert">Enter a valid Google Drive file or folder link.</p>
+      <p class="err-msg" id="driveErr" role="alert">Enter a valid Google Drive file link.</p>
     </div>
 
     <div class="field">
@@ -438,6 +452,16 @@
       </div>
     </div>
 
+    <div class="field">
+      <label class="lab" for="schedDate">Publish at <span class="hint" id="tzHint">your local time</span></label>
+      <div class="row">
+        <input type="date" id="schedDate" aria-describedby="schedErr" />
+        <input type="time" id="schedTime" aria-describedby="schedErr" step="60" />
+      </div>
+      <p class="sched-note" id="schedNote"></p>
+      <p class="err-msg" id="schedErr" role="alert">Pick a date and time.</p>
+    </div>
+
     <button class="submit" type="submit" id="btnSubmit">
       <span class="spin" aria-hidden="true"></span>
       <span class="txt">Save to sheet</span>
@@ -468,7 +492,7 @@
      Deploy AppsScript.gs on the sheet (steps are in that file), then
      paste the URL it gives you below.
      ================================================================== */
-  var SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbyEqtsXMM4vzWU3I6rg4ZdKynR4DsTW7sb-kEjPCyI1SjD27quKHpbus52yJRZz0HjDJA/exec';
+  var SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbx2HSGFzDsPfQ8r4nWArkTvF2MOv4glDg_-7Z0AEcSxgkkhDFmNnWGnaZFEVqPD93jCsQ/exec';
   var AUTH_TOKEN     = '';       // optional — must match SHARED_TOKEN in AppsScript.gs
   var SHEET_URL      = 'https://docs.google.com/spreadsheets/d/1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k/edit';
   /* ================================================================== */
@@ -550,7 +574,8 @@
 
   /* ---- caption counters ---- */
   function renderCounts(){
-    var len = $('caption').value.length;
+    /* trimmed, because that's what actually gets posted */
+    var len = $('caption').value.trim().length;
     $('capCount').textContent = len.toLocaleString() + ' characters';
     $('counts').innerHTML = selected().map(function(id){
       var p = meta(id), over = len > p.limit;
@@ -560,10 +585,15 @@
   $('caption').addEventListener('input', function(){ renderCounts(); $('capErr').classList.remove('show'); });
 
   /* ---- helpers ---- */
+  /* Single files only. A folder id looks identical but there's nothing to
+     download behind it, so the automation would fail at the upload step —
+     better to catch it here than three minutes later in the sheet. */
   function driveId(url){
-    var m = url.match(/\/d\/([a-zA-Z0-9_-]{10,})/) || url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/) || url.match(/\/folders\/([a-zA-Z0-9_-]{10,})/);
+    if(/\/folders\//.test(url)) return null;
+    var m = url.match(/\/d\/([a-zA-Z0-9_-]{10,})/) || url.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
     return m ? m[1] : null;
   }
+  function isFolderUrl(url){ return /\/folders\//.test(url); }
   /* toast(msg, bad, undoFn) — undoFn adds an Undo button for destructive actions */
   function toast(msg, bad, undoFn){
     var t = $('toast');
@@ -581,16 +611,88 @@
     t.classList.remove('show');
   });
 
+  /* ---- schedule ----------------------------------------------------
+     The two pickers are read in the browser's own timezone, then sent as
+     UTC so the sheet holds one unambiguous instant. TZ_NAME travels with
+     it purely so a human reading the sheet knows what was meant.
+     ------------------------------------------------------------------ */
+  var TZ_NAME = (function(){
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
+    catch(e){ return ''; }
+  })();
+  if(TZ_NAME) $('tzHint').textContent = 'your local time — ' + TZ_NAME;
+
+  function scheduledDate(){
+    var d = $('schedDate').value, t = $('schedTime').value;
+    if(!d || !t) return null;
+    var dt = new Date(d + 'T' + t);   // no offset => parsed as local time
+    return isNaN(dt.getTime()) ? null : dt;
+  }
+
+  /* Grey out past days in the native picker. The time floor only applies while
+     the chosen day IS today — otherwise it would block valid times tomorrow.
+     Recomputed on focus so a page left open overnight doesn't go stale. */
+  function pad(n){ return (n < 10 ? '0' : '') + n; }
+  function dayStr(d){ return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); }
+  function timeStr(d){ return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function refreshBounds(){
+    var now = new Date(), today = dayStr(now);
+    $('schedDate').min = today;
+    /* a year out is generous; past that it's a mistyped year, and the row would
+       sit unpublished in the sheet forever */
+    var cap = new Date(now.getTime()); cap.setFullYear(cap.getFullYear() + 1);
+    $('schedDate').max = dayStr(cap);
+    if($('schedDate').value === today) $('schedTime').min = timeStr(now);
+    else $('schedTime').removeAttribute('min');
+  }
+  function tooFarOut(when){
+    var cap = new Date(); cap.setFullYear(cap.getFullYear() + 1);
+    return when.getTime() > cap.getTime();
+  }
+  refreshBounds();
+  ['schedDate','schedTime'].forEach(function(id){
+    $(id).addEventListener('focus', refreshBounds);
+  });
+  /* echo the choice back so nobody has to trust the pickers blind */
+  function renderSched(){
+    var note = $('schedNote'), when = scheduledDate();
+    if(!when){ note.textContent = ''; note.classList.remove('on'); return; }
+    var mins = Math.round((when.getTime() - Date.now()) / 60000);
+    var rel;
+    if(mins < 0)        rel = 'in the past';
+    else if(mins < 1)   rel = 'in under a minute';
+    else if(mins < 60)  rel = 'in ' + mins + ' min';
+    else if(mins < 1440)rel = 'in ' + Math.round(mins / 60) + ' h';
+    else                rel = 'in ' + Math.round(mins / 1440) + ' d';
+    note.innerHTML = 'Publishes <b>' + when.toLocaleString([], {
+      weekday:'short', month:'short', day:'numeric',
+      hour:'2-digit', minute:'2-digit'
+    }) + '</b> — ' + rel;
+    note.classList.add('on');
+  }
+  ['schedDate','schedTime'].forEach(function(id){
+    $(id).addEventListener('input', function(){
+      $('schedDate').classList.remove('inp-invalid');
+      $('schedTime').classList.remove('inp-invalid');
+      $('schedErr').classList.remove('show');
+      refreshBounds();
+      renderSched();
+    });
+  });
+
   function buildPayload(){
     var url = $('drive').value.trim();
+    var when = scheduledDate();
     return {
       driveUrl: url,
       driveFileId: driveId(url),
-      caption: $('caption').value,
+      caption: $('caption').value.trim(),
       platforms: selected(),
       youtube: selected().indexOf('youtube') > -1
         ? { title: $('ytTitle').value.trim(), privacy: $('ytPrivacy').value }
         : null,
+      scheduledAt: when ? when.toISOString() : '',   // UTC — what the automation reads
+      timezone: TZ_NAME,                             // context for whoever opens the sheet
       submittedAt: new Date().toISOString(),
       source: 'autopost-landing',
       token: AUTH_TOKEN            // in the body, not a header — a custom header
@@ -606,6 +708,9 @@
 
     $('drive').classList.remove('inp-invalid');
     if(badUrl){
+      $('driveErr').textContent = isFolderUrl(url)
+        ? 'That is a folder link — paste the link to a single file inside it.'
+        : 'Enter a valid Google Drive file link.';
       void $('drive').offsetWidth;               // restart the shake
       $('drive').classList.add('inp-invalid');
       $('drive').setAttribute('aria-invalid','true');
@@ -616,14 +721,49 @@
       $('driveErr').classList.remove('show');
     }
 
-    if(!$('caption').value.trim()){
+    /* An over-limit caption can't be published to that network at all — the
+       automation would skip it and leave a half-posted row. Stop it here while
+       it's still cheap to fix. */
+    var capLen = $('caption').value.trim().length;
+    var over = capLen ? selected().filter(function(id){ return capLen > meta(id).limit; }) : [];
+    if(!capLen){
+      $('capErr').textContent = "Caption can't be empty.";
       $('capErr').classList.add('show');
       first = first || $('caption');
+    } else if(over.length){
+      $('capErr').textContent = 'Too long for ' +
+        over.map(function(id){ return meta(id).name; }).join(' and ') +
+        ' — shorten it, or untick ' + (over.length > 1 ? 'those channels.' : 'that channel.');
+      $('capErr').classList.add('show');
+      first = first || $('caption');
+    } else {
+      $('capErr').classList.remove('show');
     }
     if(!selected().length){
       $('platErr').classList.add('show');
       first = first || $('ddTrigger');
     }
+
+    /* a schedule is required — a minute of slack covers clock skew and the
+       time spent filling the form after picking "now" */
+    var when = scheduledDate();
+    $('schedDate').classList.remove('inp-invalid');
+    $('schedTime').classList.remove('inp-invalid');
+    if(!when || when.getTime() < Date.now() - 60000 || tooFarOut(when)){
+      $('schedErr').textContent = !when
+        ? 'Pick the date and time to publish.'
+        : (tooFarOut(when)
+            ? 'That is more than a year away — check the year.'
+            : 'That time has already passed — pick a later one.');
+      $('schedErr').classList.add('show');
+      void $('schedDate').offsetWidth;            // restart the shake
+      $('schedDate').classList.add('inp-invalid');
+      $('schedTime').classList.add('inp-invalid');
+      first = first || (($('schedDate').value && !$('schedTime').value) ? $('schedTime') : $('schedDate'));
+    } else {
+      $('schedErr').classList.remove('show');
+    }
+
     if(first) first.focus({ preventScroll:false });
     return !first;
   }
@@ -634,20 +774,16 @@
     $('driveErr').classList.remove('show');
   });
 
-  /* ---- payload preview ---- */
-  $('btnPreview').addEventListener('click', function(){
-    var w = window.open('', '_blank', 'width=560,height=640');
-    w.document.write('<title>Payload</title><body style="background:#08090f;color:#eef1f8;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;padding:22px"><pre>' +
-      JSON.stringify(buildPayload(), null, 2).replace(/</g,'&lt;') + '</pre>');
-    w.document.close();
-  });
-
   /* ---- history ---- */
   function loadHist(){
     try { return JSON.parse(localStorage.getItem(LS.hist) || '[]'); } catch(e){ return []; }
   }
+  /* Storage can be unavailable (private browsing, blocked cookies, quota).
+     This list is a convenience — the sheet is the real record — so a failure
+     here must never surface as a failed submission. */
   function writeHist(items){
-    localStorage.setItem(LS.hist, JSON.stringify(items.slice(0, 20)));
+    try { localStorage.setItem(LS.hist, JSON.stringify(items.slice(0, 20))); }
+    catch(e){ /* keep going */ }
   }
   function renderHist(){
     var items = loadHist();
@@ -658,12 +794,17 @@
         var p = meta(id);
         return p ? '<span class="pip" style="background:'+p.color+'"></span>' : '';
       }).join('');
-      var d = new Date(it.submittedAt);
+      /* show when it publishes, falling back to when it was saved for
+         entries stored before scheduling existed */
+      var d = new Date(it.scheduledAt || it.submittedAt);
+      var label = (it.scheduledAt ? '→ ' : '') +
+                  d.toLocaleDateString([], {month:'short', day:'numeric'}) + ' ' +
+                  d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
       var cap = (it.caption || '').replace(/</g,'&lt;').slice(0, 90) || '(no caption)';
       return '<div class="hitem" style="--d:'+(i*45)+'ms" data-i="'+i+'">' +
                '<span class="pips">'+pips+'</span>' +
                '<span class="cap">'+cap+'</span>' +
-               '<span class="when">'+d.toLocaleDateString()+' '+d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})+'</span>' +
+               '<span class="when" title="'+(it.scheduledAt ? 'Scheduled to publish' : 'Saved')+'">'+label+'</span>' +
                '<button class="del" type="button" data-i="'+i+'" aria-label="Remove this entry from the list">' +
                  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>' +
                '</button>' +
@@ -672,7 +813,7 @@
   }
   function saveHist(p){
     var items = loadHist();
-    items.unshift({ caption:p.caption, platforms:p.platforms, submittedAt:p.submittedAt });
+    items.unshift({ caption:p.caption, platforms:p.platforms, submittedAt:p.submittedAt, scheduledAt:p.scheduledAt });
     writeHist(items);
     renderHist();
   }
@@ -707,7 +848,7 @@
     var items = loadHist();
     if(!items.length) return;
     if(!confirm('Clear all ' + items.length + ' entries from this list?\n\nThis only clears the list shown here — rows already saved in your Google Sheet are not affected.')) return;
-    localStorage.removeItem(LS.hist);
+    try { localStorage.removeItem(LS.hist); } catch(e){}
     renderHist();
     toast('List cleared.', false, function(){
       writeHist(items);
@@ -718,8 +859,13 @@
   renderHist();
 
   /* ---- submit ---- */
+  /* Disabling the button isn't enough — Enter inside a text field still fires
+     submit, so a fast double-tap could post the row twice. */
+  var sending = false;
+
   $('form').addEventListener('submit', function(e){
     e.preventDefault();
+    if(sending) return;
     if(!validate()){ toast('Fix the highlighted fields.', true); return; }
 
     if(!SHEET_ENDPOINT){
@@ -729,6 +875,7 @@
 
     var payload = buildPayload();
     var btn = $('btnSubmit'), txt = btn.querySelector('.txt');
+    sending = true;
     btn.classList.add('loading');
     btn.disabled = true;
     txt.textContent = 'Saving to sheet...';
@@ -744,7 +891,17 @@
       .then(function(res){
         if(!res || !res.ok) throw new Error(res && res.error ? res.error : 'The sheet rejected the submission.');
         saveHist(payload);
-        toast('Saved to your Google Sheet — row ' + res.row + '.');
+        var at = new Date(payload.scheduledAt);
+        /* The sheet has no "post at" column, so the time was dropped and the
+           row will publish as soon as it's approved. Better to say so than to
+           report a schedule that isn't stored anywhere. */
+        if(res.scheduleStored === false){
+          toast('Saved to row ' + res.row + ', but the sheet has no "post at" column — it will publish immediately once approved.', true);
+        } else {
+          toast('Saved to row ' + res.row + ' — publishes ' + at.toLocaleString([], {
+            month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
+          }) + '.');
+        }
 
         /* brief success state on the button before it resets */
         btn.classList.remove('loading');
@@ -755,15 +912,27 @@
         $('caption').value = '';
         $('drive').value = '';
         $('ytTitle').value = '';
+        $('schedDate').value = '';
+        $('schedTime').value = '';
         renderCounts();
+        renderSched();
       })
       .catch(function(err){
         btn.classList.remove('loading');
-        toast(err.message.indexOf('Failed to fetch') > -1
-          ? 'Could not reach the sheet — check the deployment is set to "Anyone".'
-          : err.message, true);
+        /* "Failed to fetch" covers every network-layer failure, and a stale
+           SHEET_ENDPOINT is by far the most common one — a redeployed Apps
+           Script project gets a brand new /exec URL. Don't blame the access
+           setting; name both causes and log the URL actually being called. */
+        var unreachable = err.message.indexOf('Failed to fetch') > -1;
+        if(unreachable){
+          console.error('AutoPost: could not reach', SHEET_ENDPOINT, err);
+          toast('Could not reach the Apps Script endpoint. Check SHEET_ENDPOINT matches the current /exec URL, and that access is set to "Anyone". See the console.', true);
+        } else {
+          toast(err.message, true);
+        }
       })
       .finally(function(){
+        sending = false;
         btn.classList.remove('loading');
         btn.disabled = false;
         setTimeout(function(){
