@@ -87,14 +87,14 @@
         "filtersUI": {
           "values": [
             {
-              "lookupColumn": "status",
-              "lookupValue": "Publish"
+              "lookupColumn": "post status",
+              "lookupValue": "queued"
             }
           ]
         },
         "options": {}
       },
-      "notes": "Only rows a human has moved to \"Publish\". n8n never writes this column."
+      "notes": "Fetches ONLY rows whose `post status` is still \"queued\" — Apps Script writes that on every new row. Approval (`status = Publish`) is checked downstream, because this filter is what keeps the sweep from growing with the sheet."
     },
     {
       "id": "prepare",
@@ -107,7 +107,7 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Normalise one sheet row into a Facebook job.\n// Column headers are matched case-insensitively, so renaming one in the sheet\n// doesn't break this.\n\n// Canonical platform ids. Used for BOTH layouts: a TRUE/FALSE column per\n// platform (what this sheet uses) and a single comma-separated column.\nconst PLATFORM_ALIASES = {\n  facebook: 'facebook', fb: 'facebook', 'facebook page': 'facebook',\n  instagram: 'instagram', ig: 'instagram', insta: 'instagram',\n  twitter: 'twitter', x: 'twitter', 'x / twitter': 'twitter', 'twitter / x': 'twitter',\n  linkedin: 'linkedin', li: 'linkedin',\n  youtube: 'youtube', yt: 'youtube', shorts: 'youtube',\n};\n\nfunction pick(row, names) {\n  for (const name of names) {\n    const key = Object.keys(row).find((k) => k.trim().toLowerCase() === name);\n    if (key && row[key] !== '' && row[key] !== null && row[key] !== undefined) return row[key];\n  }\n  return '';\n}\n\n// A ticked checkbox arrives as a real boolean; a typed one as text.\nfunction truthy(v) {\n  if (v === true) return true;\n  const s = String(v).trim().toLowerCase();\n  return s === 'true' || s === 'yes' || s === 'y' || s === '1' || s === 'x';\n}\n\nfunction platformsFrom(row) {\n  const found = new Set();\n  // (a) one TRUE column per platform\n  for (const key of Object.keys(row)) {\n    const canon = PLATFORM_ALIASES[key.trim().toLowerCase()];\n    if (canon && truthy(row[key])) found.add(canon);\n  }\n  // (b) or a single comma-separated column, if the sheet ever grows one\n  String(pick(row, ['platforms', 'channels', 'accounts', 'social']))\n    .split(/[,;|]/)\n    .map((s) => s.trim().toLowerCase())\n    .filter(Boolean)\n    .forEach((s) => { const c = PLATFORM_ALIASES[s]; if (c) found.add(c); });\n  return [...found];\n}\n\n// Google Sheets can hand back a schedule three different ways depending on how\n// the cell was formatted, so accept all of them rather than trust one.\nfunction parseWhen(v) {\n  if (v === '' || v === null || v === undefined) return null;\n  if (v instanceof Date) return v;\n  if (typeof v === 'number') {\n    // Sheets serial date: days since 1899-12-30, in the spreadsheet's timezone\n    return new Date(Math.round((v - 25569) * 86400000));\n  }\n  const d = new Date(String(v).trim());\n  return isNaN(d.getTime()) ? null : d;\n}\n\nfunction readCommon(row) {\n  const driveUrl = String(pick(row, ['gdrive url', 'drive url', 'google drive url', 'gdrive', 'url', 'link', 'media']));\n  let fileId = String(pick(row, ['file id', 'fileid', 'drive file id', 'gdrive id']));\n  if (!fileId) {\n    const m = driveUrl.match(/\\/d\\/([a-zA-Z0-9_-]{10,})/) || driveUrl.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);\n    fileId = m ? m[1] : '';\n  }\n\n  // Blotato's Media > Upload fetches this URL itself, so it has to be public.\n  // If an image ever fails, try https://lh3.googleusercontent.com/d/<fileId>.\n  const mediaUrl = fileId ? `https://drive.google.com/uc?export=download&id=${fileId}` : '';\n\n  // n8n owns this column. Anything in it means a previous run already claimed\n  // or finished the row — never touch it again, or an approved row would be\n  // re-published on every single sweep.\n  const alreadyHandled = String(pick(row, ['post status', 'automation status', 'publish status'])).trim() !== '';\n\n  // Blank publish time means \"go on the next sweep\"; unreadable is an error,\n  // not a licence to publish immediately.\n  const scheduledRaw = pick(row, ['post at', 'publish at', 'schedule', 'scheduled', 'scheduled at', 'post date', 'publish date']);\n  const hasSchedule = scheduledRaw !== '' && scheduledRaw !== null && scheduledRaw !== undefined;\n  const dueAt = hasSchedule ? parseWhen(scheduledRaw) : null;\n  const badSchedule = hasSchedule && !dueAt;\n  const isDue = !hasSchedule || (!!dueAt && dueAt.getTime() <= Date.now());\n\n  return {\n    driveUrl,\n    fileId,\n    mediaUrl,\n    caption: String(pick(row, ['caption', 'text', 'post caption', 'message', 'content'])),\n    platforms: platformsFrom(row),\n    alreadyHandled,\n    dueAt,\n    badSchedule,\n    isDue,\n  };\n}\n\nreturn $input.all().map((item, i) => {\n  const row = item.json;\n  const c = readCommon(row);\n\n  const targetsFacebook = c.platforms.includes('facebook');\n  const ignored = c.platforms.filter((p) => p !== 'facebook');\n\n  const problems = [];\n  if (!c.fileId) problems.push('no Google Drive file id');\n  if (!c.caption) problems.push('empty caption');\n  if (c.badSchedule) problems.push('unreadable publish time');\n\n  let valid = true;\n  let skipStatus = '';\n  let skipReason = '';\n\n  if (!targetsFacebook) {\n    valid = false;\n    skipStatus = 'skipped';\n    skipReason = c.platforms.length\n      ? `row targets ${c.platforms.join(', ')} — this backend only publishes to Facebook`\n      : 'no platforms ticked';\n  } else if (problems.length) {\n    valid = false;\n    skipStatus = 'failed';\n    skipReason = problems.join('; ');\n  }\n\n  return {\n    json: {\n      row_number: row.row_number,\n      driveUrl: c.driveUrl,\n      fileId: c.fileId,\n      caption: c.caption,\n      platforms: c.platforms,\n      ignored,\n      mediaUrl: c.mediaUrl,\n      scheduledAt: c.dueAt ? c.dueAt.toISOString() : '',\n      alreadyHandled: c.alreadyHandled,\n      isDue: c.isDue,\n      valid,\n      skipStatus,\n      skipReason,\n    },\n    pairedItem: { item: i },\n  };\n});"
+        "jsCode": "// Normalise one sheet row into a Facebook job.\n// Column headers are matched case-insensitively, so renaming one in the sheet\n// doesn't break this.\n\n// Canonical platform ids. Used for BOTH layouts: a TRUE/FALSE column per\n// platform (what this sheet uses) and a single comma-separated column.\nconst PLATFORM_ALIASES = {\n  facebook: 'facebook', fb: 'facebook', 'facebook page': 'facebook',\n  instagram: 'instagram', ig: 'instagram', insta: 'instagram',\n  twitter: 'twitter', x: 'twitter', 'x / twitter': 'twitter', 'twitter / x': 'twitter',\n  linkedin: 'linkedin', li: 'linkedin',\n  youtube: 'youtube', yt: 'youtube', shorts: 'youtube',\n};\n\nfunction pick(row, names) {\n  for (const name of names) {\n    const key = Object.keys(row).find((k) => k.trim().toLowerCase() === name);\n    if (key && row[key] !== '' && row[key] !== null && row[key] !== undefined) return row[key];\n  }\n  return '';\n}\n\n// A ticked checkbox arrives as a real boolean; a typed one as text.\nfunction truthy(v) {\n  if (v === true) return true;\n  const s = String(v).trim().toLowerCase();\n  return s === 'true' || s === 'yes' || s === 'y' || s === '1' || s === 'x';\n}\n\nfunction platformsFrom(row) {\n  const found = new Set();\n  // (a) one TRUE column per platform\n  for (const key of Object.keys(row)) {\n    const canon = PLATFORM_ALIASES[key.trim().toLowerCase()];\n    if (canon && truthy(row[key])) found.add(canon);\n  }\n  // (b) or a single comma-separated column, if the sheet ever grows one\n  String(pick(row, ['platforms', 'channels', 'accounts', 'social']))\n    .split(/[,;|]/)\n    .map((s) => s.trim().toLowerCase())\n    .filter(Boolean)\n    .forEach((s) => { const c = PLATFORM_ALIASES[s]; if (c) found.add(c); });\n  return [...found];\n}\n\n// Google Sheets can hand back a schedule three different ways depending on how\n// the cell was formatted, so accept all of them rather than trust one.\nfunction parseWhen(v) {\n  if (v === '' || v === null || v === undefined) return null;\n  if (v instanceof Date) return v;\n  if (typeof v === 'number') {\n    // Sheets serial date: days since 1899-12-30, in the spreadsheet's timezone\n    return new Date(Math.round((v - 25569) * 86400000));\n  }\n  const d = new Date(String(v).trim());\n  return isNaN(d.getTime()) ? null : d;\n}\n\nfunction readCommon(row) {\n  const driveUrl = String(pick(row, ['gdrive url', 'drive url', 'google drive url', 'gdrive', 'url', 'link', 'media']));\n  let fileId = String(pick(row, ['file id', 'fileid', 'drive file id', 'gdrive id']));\n  if (!fileId) {\n    const m = driveUrl.match(/\\/d\\/([a-zA-Z0-9_-]{10,})/) || driveUrl.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);\n    fileId = m ? m[1] : '';\n  }\n\n  // The cell holds one URL, or several comma-separated for a carousel. Blotato\n  // fetches each itself, so they have to be public — the form already requires\n  // \"anyone with the link\". If an image ever fails, try\n  // https://lh3.googleusercontent.com/d/<fileId> instead.\n  const fileIds = driveUrl\n    .split(',')\n    .map((s) => s.trim())\n    .filter(Boolean)\n    .map((u) => {\n      const m = u.match(/\\/d\\/([a-zA-Z0-9_-]{10,})/) || u.match(/[?&]id=([a-zA-Z0-9_-]{10,})/);\n      return m ? m[1] : (/^[a-zA-Z0-9_-]{10,}$/.test(u) ? u : '');\n    })\n    .filter(Boolean);\n  const mediaUrls = fileIds.map((id) => `https://drive.google.com/uc?export=download&id=${id}`);\n\n  // n8n owns `post status`. 'queued' means untouched; anything else means a\n  // previous run already claimed or finished the row, so hands off — otherwise\n  // an approved row would be re-published on every single sweep.\n  const postStatus = String(pick(row, ['post status', 'automation status', 'publish status'])).trim().toLowerCase();\n  const unclaimed = postStatus === '' || postStatus === 'queued';\n\n  // The human gate. n8n reads this column but never writes it, so it stays on\n  // 'Publish' after a post goes out — which is exactly why `unclaimed` above is\n  // what actually stops a repeat, not this.\n  const approved = String(pick(row, ['status', 'state'])).trim().toLowerCase() === 'publish';\n\n  // Blank publish time means \"go on the next sweep\"; unreadable is an error,\n  // not a licence to publish immediately.\n  const scheduledRaw = pick(row, ['post at', 'publish at', 'schedule', 'scheduled', 'scheduled at', 'post date', 'publish date']);\n  const hasSchedule = scheduledRaw !== '' && scheduledRaw !== null && scheduledRaw !== undefined;\n  const dueAt = hasSchedule ? parseWhen(scheduledRaw) : null;\n  const badSchedule = hasSchedule && !dueAt;\n  const isDue = !hasSchedule || (!!dueAt && dueAt.getTime() <= Date.now());\n\n  return {\n    driveUrl,\n    fileId,\n    fileIds,\n    mediaUrls,\n    caption: String(pick(row, ['caption', 'text', 'post caption', 'message', 'content'])),\n    platforms: platformsFrom(row),\n    approved,\n    unclaimed,\n    dueAt,\n    badSchedule,\n    isDue,\n  };\n}\n\nreturn $input.all().map((item, i) => {\n  const row = item.json;\n  const c = readCommon(row);\n\n  const targetsFacebook = c.platforms.includes('facebook');\n  const ignored = c.platforms.filter((p) => p !== 'facebook');\n\n  const problems = [];\n  if (!c.mediaUrls.length) problems.push('no usable media link');\n  if (!c.caption) problems.push('empty caption');\n  if (c.badSchedule) problems.push('unreadable publish time');\n\n  let valid = true;\n  let skipStatus = '';\n  let skipReason = '';\n\n  if (!targetsFacebook) {\n    valid = false;\n    skipStatus = 'skipped';\n    skipReason = c.platforms.length\n      ? `row targets ${c.platforms.join(', ')} — this backend only publishes to Facebook`\n      : 'no platforms ticked';\n  } else if (problems.length) {\n    valid = false;\n    skipStatus = 'failed';\n    skipReason = problems.join('; ');\n  }\n\n  return {\n    json: {\n      row_number: row.row_number,\n      driveUrl: c.driveUrl,\n      fileId: c.fileIds[0] || '',\n      caption: c.caption,\n      platforms: c.platforms,\n      ignored,\n      mediaUrls: c.mediaUrls,\n      scheduledAt: c.dueAt ? c.dueAt.toISOString() : '',\n      approved: c.approved && c.unclaimed,\n      isDue: c.isDue,\n      valid,\n      skipStatus,\n      skipReason,\n    },\n    pairedItem: { item: i },\n  };\n});"
       }
     },
     {
@@ -188,7 +188,7 @@
       "type": "@blotato/n8n-nodes-blotato.blotato",
       "typeVersion": 2,
       "position": [
-        660,
+        880,
         240
       ],
       "onError": "continueRegularOutput",
@@ -196,9 +196,9 @@
         "resource": "media",
         "operation": "upload",
         "useBinaryData": false,
-        "mediaUrl": "={{ $('Prepare jobs').item.json.mediaUrl }}"
+        "mediaUrl": "={{ $json.sourceUrl }}"
       },
-      "notes": "URL upload, not binary — the node's own note says binary is size-capped and to use a URL for Google Drive files (up to ~60 MB). Returns { url } on Blotato's CDN."
+      "notes": "Runs once per media item. URL upload, not binary — the node's own note says to use a URL for Google Drive files (up to ~60 MB)."
     },
     {
       "id": "build-payload",
@@ -206,12 +206,12 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
+        1320,
         240
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Blotato re-hosts the file keeping its real extension, so the URL it returns\n// tells us whether this is a video — which decides target.mediaType.\nconst VIDEO_EXT = /\\.(mp4|mov|m4v|webm|mkv|avi)(\\?|$)/i;\nconst jobs = $('Prepare jobs').all().filter((j) => j.json.valid);\n\nreturn $input.all().map((item, i) => {\n  const job = jobs[i] ? jobs[i].json : {};\n  const res = item.json || {};\n\n  const uploadedUrl = res.url ? String(res.url) : '';\n  // The Blotato node reports failures as a plain string on `error`.\n  const uploadError = res.error\n    ? String(res.error.message || res.error)\n    : (uploadedUrl ? '' : 'Blotato returned no media URL — check the Drive file is shared \"anyone with the link\"');\n\n  return {\n    json: {\n      ...job,\n      mediaUrl: uploadedUrl,\n      isVideo: VIDEO_EXT.test(uploadedUrl),\n      uploadOk: !!uploadedUrl && !res.error,\n      uploadError,\n    },\n    pairedItem: { item: i },\n  };\n});"
+        "jsCode": "// Blotato re-hosts each file keeping its real extension, so the URLs it\n// returns tell us whether this is a video post — which decides target.mediaType.\nconst VIDEO_EXT = /\\.(mp4|mov|m4v|webm|mkv|avi)(\\?|$)/i;\nconst MEDIA_LIMIT = 30;   // Facebook album ceiling\n\nreturn $input.all().map((item, i) => {\n  const job = item.json;\n  const urls = job.mediaUrls || [];\n  const isVideo = urls.length === 1 && VIDEO_EXT.test(urls[0]);\n  const anyVideo = urls.some((u) => VIDEO_EXT.test(u));\n\n  let uploadError = '';\n  if (!urls.length) uploadError = job.uploadErrors || 'Blotato returned no media URL — check the Drive files are shared \"anyone with the link\"';\n  else if (anyVideo && urls.length > 1) uploadError = 'video cannot be mixed into a carousel';\n  else if (urls.length > MEDIA_LIMIT) uploadError = `${urls.length} media items, Facebook allows ${MEDIA_LIMIT}`;\n\n  return {\n    json: {\n      ...job,\n      mediaUrl: urls.join(','),   // the Blotato node splits this back into an array\n      mediaCount: urls.length,\n      isVideo,\n      uploadOk: !uploadError,\n      uploadError,\n    },\n    pairedItem: { item: i },\n  };\n});"
       }
     },
     {
@@ -220,7 +220,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1100,
+        1540,
         240
       ],
       "parameters": {
@@ -255,7 +255,7 @@
       "type": "@blotato/n8n-nodes-blotato.blotato",
       "typeVersion": 2,
       "position": [
-        1320,
+        1760,
         120
       ],
       "onError": "continueRegularOutput",
@@ -288,7 +288,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
-        1540,
+        1980,
         120
       ],
       "parameters": {
@@ -323,7 +323,7 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        1760,
+        2200,
         20
       ],
       "webhookId": "8f2c1a64-5b71-4f0e-9d2a-autopost0002",
@@ -339,7 +339,7 @@
       "type": "@blotato/n8n-nodes-blotato.blotato",
       "typeVersion": 2,
       "position": [
-        1960,
+        2400,
         20
       ],
       "onError": "continueRegularOutput",
@@ -356,7 +356,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        2180,
+        2620,
         20
       ],
       "parameters": {
@@ -377,7 +377,7 @@
             {
               "id": "pr-3",
               "name": "result",
-              "value": "={{ (() => { const ig = $('Build post payload').item.json.ignored || []; const extra = ig.length ? ' | ignored platforms: ' + ig.join(', ') : ''; const sub = $('Blotato publish').item.json.postSubmissionId || ''; if ($json.status === 'published') return 'facebook: posted — ' + ($json.publicUrl || 'no url returned') + extra; if ($json.status === 'failed') return 'facebook: FAILED — ' + ($json.errorMessage || 'no reason given') + extra; if ($json.error) return 'facebook: submitted — status check failed (' + String($json.error) + '), submission ' + sub + extra; return 'facebook: submitted — still in progress, submission ' + sub + extra; })() }}",
+              "value": "={{ (() => { const ig = $('Build post payload').item.json.ignored || []; const drop = $('Build post payload').item.json.uploadErrors ? 'MEDIA DROPPED (' + $('Build post payload').item.json.uploadErrors + ') | ' : ''; const extra = ig.length ? ' | ignored platforms: ' + ig.join(', ') : ''; const sub = $('Blotato publish').item.json.postSubmissionId || ''; if ($json.status === 'published') return drop + 'facebook: posted (' + ($('Build post payload').item.json.mediaCount || 1) + ' media) — ' + ($json.publicUrl || 'no url returned') + extra; if ($json.status === 'failed') return drop + 'facebook: FAILED — ' + ($json.errorMessage || 'no reason given') + extra; if ($json.error) return drop + 'facebook: submitted — status check failed (' + String($json.error) + '), submission ' + sub + extra; return drop + 'facebook: submitted — still in progress, submission ' + sub + extra; })() }}",
               "type": "string"
             },
             {
@@ -398,7 +398,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1760,
+        2200,
         220
       ],
       "parameters": {
@@ -440,7 +440,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        1320,
+        1760,
         400
       ],
       "parameters": {
@@ -496,7 +496,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
       "position": [
-        2420,
+        2860,
         300
       ],
       "parameters": {
@@ -577,8 +577,8 @@
       "notes": "Dead end on purpose — the row is either already handled or not due yet. Nothing is written, so the next sweep re-checks it."
     },
     {
-      "id": "handled-check",
-      "name": "Already handled?",
+      "id": "approved-check",
+      "name": "Approved?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
       "position": [
@@ -596,7 +596,7 @@
           "conditions": [
             {
               "id": "handled-1",
-              "leftValue": "={{ $json.alreadyHandled }}",
+              "leftValue": "={{ $json.approved }}",
               "rightValue": "",
               "operator": {
                 "type": "boolean",
@@ -610,7 +610,37 @@
         "looseTypeValidation": true,
         "options": {}
       },
-      "notes": "The `status` column stays on \"Publish\" after a post goes out, so this is what stops a published row being posted again on the next sweep. Anything in `post status` means hands off."
+      "notes": "True only when a human has moved `status` to \"Publish\" AND `post status` is still \"queued\". Everything else is left completely untouched so the next sweep re-checks it."
+    },
+    {
+      "id": "split-media",
+      "name": "Split media",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        240
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// One item per media URL, so the Blotato upload node can run over them.\n// Carousel order is the sheet's order, so the index rides along and is used to\n// rebuild the list after the uploads finish out of order.\nconst jobs = new Map($('Prepare jobs').all().map((i) => [String(i.json.row_number), i.json]));\nconst out = [];\n\n$input.all().forEach((item, i) => {\n  const job = jobs.get(String(item.json.row_number));\n  if (!job) return;\n  (job.mediaUrls || []).forEach((url, idx) => {\n    out.push({\n      json: { row_number: job.row_number, idx, sourceUrl: url },\n      pairedItem: { item: i },\n    });\n  });\n});\n\nreturn out;"
+      },
+      "notes": "Fans a row out to one item per media URL so the upload node can process a carousel."
+    },
+    {
+      "id": "collect-media",
+      "name": "Collect media",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        240
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Rebuild one item per row, with its media back in the original order.\n// Uploads finish whenever they finish, so position comes from the index we\n// carried through rather than from arrival order.\nconst sent = $('Split media').all();\nconst jobs = new Map($('Prepare jobs').all().map((i) => [String(i.json.row_number), i.json]));\nconst byRow = new Map();\n\n$input.all().forEach((item, i) => {\n  const s = (sent[i] && sent[i].json) || {};\n  const key = String(s.row_number);\n  if (!byRow.has(key)) byRow.set(key, { row_number: s.row_number, slots: [], errors: [] });\n  const g = byRow.get(key);\n\n  const res = item.json || {};\n  if (res.url) {\n    g.slots[s.idx] = String(res.url);\n  } else {\n    // The Blotato node reports failures as a plain string on `error`.\n    g.errors.push('item ' + (s.idx + 1) + ': ' +\n      (res.error ? String(res.error.message || res.error) : 'no URL returned'));\n  }\n});\n\nreturn [...byRow.values()].map((g) => {\n  const job = jobs.get(String(g.row_number)) || {};\n  return {\n    json: {\n      ...job,\n      mediaUrls: g.slots.filter(Boolean),   // holes from failed uploads collapse\n      uploadErrors: g.errors.join('; '),\n    },\n  };\n});"
+      },
+      "notes": "Rebuilds one item per row with mediaUrls back in carousel order."
     }
   ],
   "connections": {
@@ -651,7 +681,7 @@
       "main": [
         [
           {
-            "node": "Already handled?",
+            "node": "Approved?",
             "type": "main",
             "index": 0
           }
@@ -680,7 +710,7 @@
       "main": [
         [
           {
-            "node": "Blotato upload media",
+            "node": "Split media",
             "type": "main",
             "index": 0
           }
@@ -691,7 +721,7 @@
       "main": [
         [
           {
-            "node": "Build post payload",
+            "node": "Collect media",
             "type": "main",
             "index": 0
           }
@@ -840,18 +870,40 @@
         ]
       ]
     },
-    "Already handled?": {
+    "Approved?": {
       "main": [
         [
           {
-            "node": "Nothing to do",
+            "node": "Valid row?",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Valid row?",
+            "node": "Nothing to do",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split media": {
+      "main": [
+        [
+          {
+            "node": "Blotato upload media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect media": {
+      "main": [
+        [
+          {
+            "node": "Build post payload",
             "type": "main",
             "index": 0
           }

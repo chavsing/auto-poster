@@ -16,7 +16,20 @@
 
 var SHEET_ID    = '1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k';
 var SHEET_NAME  = '';   // leave blank to use the first tab
-var SHARED_TOKEN = '';  // optional: set a password here AND in index.html's AUTH_TOKEN
+/* Must match AUTH_TOKEN in index.html. This is NOT a real secret — it ships in
+   the page source, so anyone who views source can read it. What it does buy you
+   is that a bot hitting the /exec URL directly, without ever loading the page,
+   gets rejected. For actual access control put the page behind Vercel's
+   Deployment Protection. Change this string any time; change both files. */
+var SHARED_TOKEN = 'ap_5iLo88aF_oQ0NG-hh1JKxDUi';
+
+/* Daily ceilings, counted per UTC day. The endpoint is public and now writes
+   files into Drive, so an unbounded one is an invitation to fill it. */
+var MAX_ROWS_PER_DAY    = 200;
+var MAX_UPLOADS_PER_DAY = 50;
+
+/* Instagram and LinkedIn cap carousels at 10; the form enforces the same. */
+var MAX_MEDIA = 10;
 
 /* This script's only job is to append the row. n8n polls the sheet on its own
    schedule and decides when to publish — nothing here talks to n8n. */
@@ -28,6 +41,11 @@ var SHARED_TOKEN = '';  // optional: set a password here AND in index.html's AUT
    /exec URL keeps running the old code. */
 var NEW_STATUS = 'For review';
 
+/* What a fresh row's `post status` says. n8n's sheet read filters on exactly
+   this value, so published rows drop out of the query entirely instead of being
+   re-fetched on every sweep forever. Must match the filter in the workflow. */
+var QUEUED_STATUS = 'queued';
+
 /* Uploaded files land here, in the Drive of whoever deployed this script.
    Created on first use. Every file is link-shared, because the automation
    fetches it over the public internet. */
@@ -37,7 +55,7 @@ var MAX_UPLOAD_MB = 20;
 /* Bump this whenever you change this file. Opening the /exec URL in a browser
    shows the version that is actually LIVE — which is the deployed one, not the
    one in the editor. If it doesn't match, the deployment wasn't updated. */
-var VERSION = '3-uploads';
+var VERSION = '4-carousel';
 
 /* Column headers are matched case-insensitively against these aliases.
    Add a column to the sheet with any of these names and it fills itself in. */
@@ -49,6 +67,7 @@ var FIELD_ALIASES = {
   ytTitle:    ['youtube title', 'yt title', 'video title', 'title'],
   ytPrivacy:  ['youtube privacy', 'yt privacy', 'visibility', 'privacy'],
   status:     ['status', 'state'],
+  postStatus: ['post status', 'automation status', 'publish status'],
   scheduledAt:['post at', 'publish at', 'schedule', 'scheduled', 'scheduled at', 'post date', 'publish date'],
   timezone:   ['timezone', 'time zone', 'tz'],
   timestamp:  ['timestamp', 'date', 'submitted', 'submitted at', 'created', 'time']
@@ -79,17 +98,43 @@ function doPost(e) {
     if (SHARED_TOKEN && body.token !== SHARED_TOKEN) {
       return respond({ ok: false, error: 'Unauthorized.' });
     }
-    /* An upload becomes a Drive file here, so everything downstream — this
-       script's own row builder, n8n, Blotato — only ever sees a Drive URL. */
-    if (body.upload && body.upload.dataBase64) {
-      var saved = saveUpload(body.upload);
-      if (!saved.ok) return respond({ ok: false, error: saved.error });
-      body.driveUrl = saved.url;
-      body.driveFileId = saved.id;
+    var items = body.media || [];
+    if (items.length > MAX_MEDIA) {
+      return respond({ ok: false, error: 'At most ' + MAX_MEDIA + ' media items per post.' });
+    }
+
+    var fileCount = 0;
+    for (var m = 0; m < items.length; m++) {
+      if (items[m] && items[m].type === 'upload') fileCount++;
+    }
+    var overQuota = checkQuota(fileCount);
+    if (overQuota) return respond({ ok: false, error: overQuota });
+
+    /* Resolve the ordered list to Drive URLs, uploading the entries that need
+       it. Order is preserved because item 1 is the carousel cover. Everything
+       downstream — this script's row builder, n8n, Blotato — only ever sees
+       Drive URLs, so none of them know an upload happened. */
+    var urls = [], ids = [];
+    for (var k = 0; k < items.length; k++) {
+      var it = items[k] || {};
+      if (it.type === 'upload' && it.dataBase64) {
+        var saved = saveUpload(it);
+        if (!saved.ok) return respond({ ok: false, error: 'Item ' + (k + 1) + ': ' + saved.error });
+        urls.push(saved.url);
+        ids.push(saved.id);
+      } else if (it.type === 'link' && it.url) {
+        urls.push(it.url);
+        ids.push(driveIdFrom(it.url));
+      }
+    }
+
+    if (urls.length) {
+      body.driveUrl = urls.join(', ');
+      body.driveFileId = ids.join(', ');
     }
 
     if (!body.driveUrl || !body.caption) {
-      return respond({ ok: false, error: 'A Drive link or an uploaded file, plus a caption, are required.' });
+      return respond({ ok: false, error: 'At least one image or video, plus a caption, are required.' });
     }
 
     var ss = SpreadsheetApp.openById(SHEET_ID);
@@ -141,8 +186,49 @@ function cellFor(header, body, platforms) {
   if (matches(header, FIELD_ALIASES.scheduledAt)) return '';   // written as text below
   if (matches(header, FIELD_ALIASES.timezone))    return body.timezone || '';
   if (matches(header, FIELD_ALIASES.status))      return NEW_STATUS;
+  /* n8n reads ONLY rows sitting at this marker, so a published row is never
+     fetched again — the sweep stays the same size however big the sheet gets. */
+  if (matches(header, FIELD_ALIASES.postStatus))  return QUEUED_STATUS;
 
   return '';   // unknown column: leave it alone
+}
+
+/** Pull the file id out of a Drive URL, so the File ID column still fills. */
+function driveIdFrom(url) {
+  var m = String(url).match(/\/d\/([a-zA-Z0-9_-]{10,})/) ||
+          String(url).match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+  return m ? m[1] : '';
+}
+
+/**
+ * Count this request against the day's ceilings, or refuse it.
+ * `uploadCount` is the number of files in the post, not a boolean — a
+ * ten-image carousel should cost ten, otherwise the upload cap means nothing.
+ */
+function checkQuota(uploadCount) {
+  var props = PropertiesService.getScriptProperties();
+  var today = Utilities.formatDate(new Date(), 'UTC', 'yyyy-MM-dd');
+
+  var q = { date: today, rows: 0, uploads: 0 };
+  var raw = props.getProperty('quota');
+  if (raw) {
+    try {
+      var prev = JSON.parse(raw);
+      if (prev && prev.date === today) q = prev;   // stale day => start over
+    } catch (ignored) {}
+  }
+
+  if (q.rows >= MAX_ROWS_PER_DAY) {
+    return 'Daily submission limit reached. Try again tomorrow.';
+  }
+  if (uploadCount > 0 && q.uploads + uploadCount > MAX_UPLOADS_PER_DAY) {
+    return 'Daily upload limit reached. Paste a Drive link instead, or try again tomorrow.';
+  }
+
+  q.rows += 1;
+  q.uploads += uploadCount;
+  props.setProperty('quota', JSON.stringify(q));
+  return '';
 }
 
 /**

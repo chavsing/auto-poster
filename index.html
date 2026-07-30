@@ -203,23 +203,49 @@
   .drop-t{font-size:14px;font-weight:640}
   .drop-s{font-size:12px;opacity:.75}
 
-  .filechip{
-    display:flex;align-items:center;gap:10px;margin-top:11px;padding:10px 10px 10px 14px;
+  /* ---------- media list (carousel order) ---------- */
+  .linkrow{display:flex;gap:8px}
+  .linkrow input{flex:1;min-width:0}
+  .addlink{
+    flex:0 0 auto;padding:0 18px;min-height:48px;border-radius:13px;cursor:pointer;
+    background:rgba(255,255,255,.09);border:1px solid var(--stroke-2);color:var(--text);
+    font:inherit;font-size:13.5px;font-weight:640;
+    transition:background var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
+  }
+  .addlink:hover{background:rgba(255,255,255,.16)}
+  .addlink:active{transform:scale(.96)}
+
+  .medialist{display:flex;flex-direction:column;gap:7px;margin-top:11px}
+  .medialist:empty{display:none}
+  .mitem{
+    display:flex;align-items:center;gap:11px;padding:8px 8px 8px 10px;
     background:rgba(255,255,255,.05);border:1px solid var(--stroke);border-radius:12px;
     animation:pop var(--t) var(--ease-spring);
   }
-  /* a class-level display beats the UA sheet's [hidden]{display:none}, so the
-     hidden attribute has to be honoured explicitly or the chip never goes away */
-  .filechip[hidden]{display:none}
-  .fc-name{flex:1;min-width:0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .fc-size{font-size:12px;color:var(--muted);flex:0 0 auto;font-variant-numeric:tabular-nums}
-  .fc-x{
-    flex:0 0 auto;width:36px;height:36px;display:grid;place-items:center;
-    background:none;border:0;border-radius:9px;cursor:pointer;color:var(--muted);
-    transition:color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  .mi-n{
+    flex:0 0 auto;width:20px;height:20px;border-radius:6px;display:grid;place-items:center;
+    background:rgba(255,255,255,.1);font-size:11px;font-weight:700;color:var(--muted);
+    font-variant-numeric:tabular-nums;
   }
-  .fc-x:hover{color:var(--err);background:rgba(255,95,112,.12)}
-  .fc-x svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round}
+  .mi-thumb{
+    flex:0 0 auto;width:44px;height:44px;border-radius:9px;overflow:hidden;background:rgba(0,0,0,.35);
+    display:grid;place-items:center;
+  }
+  .mi-thumb img,.mi-thumb video{width:100%;height:100%;object-fit:cover;display:block}
+  .mi-body{flex:1;min-width:0}
+  .mi-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mi-sub{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .mi-btn{
+    flex:0 0 auto;width:32px;height:32px;display:grid;place-items:center;
+    background:none;border:0;border-radius:8px;cursor:pointer;color:var(--muted);
+    transition:color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out),opacity var(--t-fast) var(--ease-out);
+  }
+  .mi-btn:hover:not(:disabled){color:var(--text);background:rgba(255,255,255,.1)}
+  .mi-btn:disabled{opacity:.25;cursor:not-allowed}
+  .mi-btn.rm:hover{color:var(--err);background:rgba(255,95,112,.12)}
+  .mi-btn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+  .media-note{margin:9px 0 0;font-size:12px;color:var(--muted);min-height:1.1em}
+  .media-note.warn{color:#ffa3ad}
 
   /* ---------- aspect ratio ---------- */
   .ratios{display:flex;align-items:center;gap:11px;margin-top:14px;flex-wrap:wrap}
@@ -542,29 +568,28 @@
       </div>
 
       <div id="paneLink">
-        <input type="url" id="drive" name="drive" inputmode="url" autocomplete="off" aria-describedby="driveErr"
-               placeholder="https://drive.google.com/file/d/1AbC.../view?usp=sharing" />
+        <div class="linkrow">
+          <input type="url" id="drive" name="drive" inputmode="url" autocomplete="off" aria-describedby="driveErr"
+                 placeholder="https://drive.google.com/file/d/1AbC.../view?usp=sharing" />
+          <button type="button" class="addlink" id="btnAddLink">Add</button>
+        </div>
         <p class="err-msg" id="driveErr" role="alert">Enter a valid Google Drive file link.</p>
       </div>
 
       <div id="paneUpload" hidden>
         <label class="drop" id="drop" tabindex="0" role="button" aria-describedby="fileErr">
-          <input type="file" id="file" accept="image/*,video/*" hidden />
+          <input type="file" id="file" accept="image/*,video/*" multiple hidden />
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/>
           </svg>
-          <span class="drop-t">Choose a file, or drop it here</span>
-          <span class="drop-s">Images and video, up to 20 MB</span>
+          <span class="drop-t">Choose files, or drop them here</span>
+          <span class="drop-s">Images and video, up to 20 MB each</span>
         </label>
-        <div class="filechip" id="fileChip" hidden>
-          <span class="fc-name" id="fcName"></span>
-          <span class="fc-size" id="fcSize"></span>
-          <button type="button" class="fc-x" id="fcX" aria-label="Remove the selected file">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
-          </button>
-        </div>
         <p class="err-msg" id="fileErr" role="alert">Choose a file to upload.</p>
       </div>
+
+      <div class="medialist" id="mediaList"></div>
+      <p class="media-note" id="mediaNote"></p>
 
       <div class="ratios">
         <span class="ratios-lab">Crop to</span>
@@ -660,7 +685,11 @@
      paste the URL it gives you below.
      ================================================================== */
   var SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbx2HSGFzDsPfQ8r4nWArkTvF2MOv4glDg_-7Z0AEcSxgkkhDFmNnWGnaZFEVqPD93jCsQ/exec';
-  var AUTH_TOKEN     = '';       // optional — must match SHARED_TOKEN in AppsScript.gs
+  /* Must match SHARED_TOKEN in AppsScript.gs. Not a secret — it's visible right
+     here in the page source. It only turns away bots that POST to the endpoint
+     without ever loading this page. Real access control is Vercel's Deployment
+     Protection, plus the daily ceilings the Apps Script enforces. */
+  var AUTH_TOKEN     = 'ap_5iLo88aF_oQ0NG-hh1JKxDUi';
   var SHEET_URL      = 'https://docs.google.com/spreadsheets/d/1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k/edit';
   /* ================================================================== */
 
@@ -752,14 +781,15 @@
   }
   $('caption').addEventListener('input', function(){ renderCounts(); renderPreview(); $('capErr').classList.remove('show'); });
 
-  /* ---- media: link or upload ----------------------------------------
-     Uploads are base64'd to Apps Script, which writes them to Drive and
-     link-shares them. The row still ends up holding an ordinary Drive
-     URL, so n8n and Blotato need no knowledge of any of this.
-     20 MB is the practical ceiling on an Apps Script request body once
-     base64 has inflated the bytes by a third.
+  /* ---- media: an ordered list of items -------------------------------
+     Multiple images become a carousel. Order matters — item 1 is the
+     cover — so the list is explicit and reorderable rather than a set.
+     Items are either a Drive link or an upload; both resolve to a Drive
+     URL server-side, so the sheet just holds a comma-separated list and
+     n8n never needs to know which was which.
      ------------------------------------------------------------------ */
   var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+  var MAX_MEDIA = 10;                    // Instagram/LinkedIn carousel ceiling
   var RATIOS = [
     { id:'orig', name:'Original', v:null },
     { id:'1x1',  name:'1:1',      v:1 },
@@ -767,9 +797,14 @@
     { id:'16x9', name:'16:9',     v:16/9 },
     { id:'9x16', name:'9:16',     v:9/16 }
   ];
-  var mode = 'link';        // 'link' | 'upload'
+  /* What each network accepts in one post. Over the limit we skip that
+     platform rather than trimming — a trimmed carousel is a different post
+     from the one you composed. */
+  var MEDIA_LIMITS = { facebook:30, instagram:10, twitter:4, linkedin:10, youtube:1 };
+
+  var mode = 'link';        // which widget adds to the list
   var ratioId = 'orig';
-  var upload = null;        // { src, blob, name, mimeType, size, url, isVideo, isGif }
+  var media = [];           // [{ kind, url, fileId, src, blob, name, mimeType, size, objectUrl, isVideo, isGif }]
 
   function ratioValue(){
     var r = RATIOS.filter(function(x){ return x.id === ratioId; })[0];
@@ -778,11 +813,15 @@
   function prettyBytes(n){
     return n < 1024*1024 ? Math.round(n/1024) + ' KB' : (n/1048576).toFixed(1) + ' MB';
   }
-  /* Cropping needs pixels we can only reach for a still image. Animated GIFs
-     are excluded because canvas would flatten them to the first frame. */
-  function canCrop(){
-    return mode === 'upload' && upload && !upload.isVideo && !upload.isGif;
+  function hasVideo(){
+    return media.some(function(m){ return m.isVideo; });
   }
+  /* Cropping needs pixels, so it only applies to still-image uploads.
+     Animated GIFs are excluded — canvas would flatten them to frame one. */
+  function croppable(){
+    return media.filter(function(m){ return m.kind === 'file' && !m.isVideo && !m.isGif; });
+  }
+  function canCrop(){ return croppable().length > 0; }
 
   function setMode(m){
     mode = m;
@@ -793,15 +832,86 @@
     $('paneLink').hidden = m !== 'link';
     $('paneUpload').hidden = m !== 'upload';
     $('mediaHint').textContent = m === 'link'
-      ? 'image or video — shared "anyone with the link"'
-      : 'image or video — up to 20 MB';
+      ? 'shared "anyone with the link" — up to ' + MAX_MEDIA
+      : 'up to ' + MAX_MEDIA + ', 20 MB each';
     $('driveErr').classList.remove('show');
     $('fileErr').classList.remove('show');
-    renderRatios();
-    renderPreview();
+    renderMedia();
   }
   $('modeLink').addEventListener('click', function(){ setMode('link'); });
   $('modeUpload').addEventListener('click', function(){ setMode('upload'); });
+
+  function thumbHtml(m){
+    if(m.kind === 'file' && m.objectUrl){
+      return m.isVideo
+        ? '<video src="' + m.objectUrl + '" muted playsinline preload="metadata"></video>'
+        : '<img alt="" src="' + m.objectUrl + '" />';
+    }
+    if(m.kind === 'link' && m.fileId){
+      return '<img alt="" referrerpolicy="no-referrer" src="https://drive.google.com/thumbnail?id=' + m.fileId + '&sz=w120" />';
+    }
+    return '';
+  }
+
+  function renderMedia(){
+    $('mediaList').innerHTML = media.map(function(m, i){
+      var sub = m.kind === 'file'
+        ? (m.isVideo ? 'video · ' : 'image · ') + prettyBytes(m.size)
+        : 'Drive link';
+      return '<div class="mitem">' +
+        '<span class="mi-n">' + (i + 1) + '</span>' +
+        '<span class="mi-thumb">' + thumbHtml(m) + '</span>' +
+        '<span class="mi-body"><span class="mi-name">' + pvEsc(m.name) + '</span>' +
+        '<span class="mi-sub">' + sub + '</span></span>' +
+        '<button type="button" class="mi-btn" data-up="' + i + '" aria-label="Move up"' + (i === 0 ? ' disabled' : '') + '>' +
+          '<svg viewBox="0 0 24 24"><polyline points="6,14 12,8 18,14"/></svg></button>' +
+        '<button type="button" class="mi-btn" data-down="' + i + '" aria-label="Move down"' + (i === media.length - 1 ? ' disabled' : '') + '>' +
+          '<svg viewBox="0 0 24 24"><polyline points="6,10 12,16 18,10"/></svg></button>' +
+        '<button type="button" class="mi-btn rm" data-rm="' + i + '" aria-label="Remove">' +
+          '<svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></svg></button>' +
+      '</div>';
+    }).join('');
+
+    /* Warn about platforms this set would be skipped on. Not blocked — the
+       automation publishes everywhere it can and records the rest. */
+    var note = $('mediaNote');
+    note.classList.remove('warn');
+    var n = media.length;
+    if(!n){
+      note.textContent = '';
+    } else if(hasVideo() && n > 1){
+      note.textContent = 'Video cannot be mixed into a carousel — keep one video on its own.';
+      note.classList.add('warn');
+    } else {
+      var over = selected().filter(function(p){ return n > (MEDIA_LIMITS[p] || 99); });
+      var msg = n + ' of ' + MAX_MEDIA + (n > 1 ? ' — posts as a carousel, item 1 is the cover.' : '.');
+      if(over.length){
+        note.textContent = msg + ' ' + over.map(function(p){
+          return meta(p).name + ' allows ' + MEDIA_LIMITS[p];
+        }).join(', ') + ' — those will be skipped.';
+        note.classList.add('warn');
+      } else {
+        note.textContent = msg;
+      }
+    }
+    renderRatios();
+    renderPreview();
+  }
+
+  $('mediaList').addEventListener('click', function(e){
+    var b = e.target.closest('.mi-btn');
+    if(!b || b.disabled) return;
+    var up = b.getAttribute('data-up'), down = b.getAttribute('data-down'), rm = b.getAttribute('data-rm');
+    if(rm !== null){
+      var gone = media.splice(+rm, 1)[0];
+      if(gone && gone.objectUrl) URL.revokeObjectURL(gone.objectUrl);
+    } else if(up !== null){
+      var i = +up; media.splice(i - 1, 0, media.splice(i, 1)[0]);
+    } else if(down !== null){
+      var j = +down; media.splice(j + 1, 0, media.splice(j, 1)[0]);
+    }
+    renderMedia();
+  });
 
   function renderRatios(){
     var enabled = canCrop();
@@ -814,29 +924,28 @@
     var note = $('ratioNote');
     note.classList.remove('warn');
     if(enabled){
+      var n = croppable().length;
       note.textContent = ratioId === 'orig'
-        ? 'The file is uploaded as-is.'
-        : 'The image is cropped from the centre before upload, so every channel gets this shape.';
-    } else if(mode === 'link'){
+        ? 'Uploaded as-is.'
+        : 'Cropped from the centre before upload — all ' + n + ' image' + (n > 1 ? 's' : '') +
+          ' get this shape, so the carousel stays uniform.';
+    } else if(media.length && !media.some(function(m){ return m.kind === 'file'; })){
       note.textContent = 'Cropping only applies to uploads — a Drive link is published as it is.';
-    } else if(upload && upload.isVideo){
-      note.textContent = 'Video can\'t be re-encoded in the browser, so it uploads unchanged.';
-    } else if(upload && upload.isGif){
-      note.textContent = 'Cropping a GIF would drop the animation, so it uploads unchanged.';
+    } else if(media.length){
+      note.textContent = 'Video and GIFs cannot be re-encoded in the browser, so they upload unchanged.';
     } else {
-      note.textContent = 'Choose a file to enable cropping.';
+      note.textContent = 'Add an image upload to enable cropping.';
     }
   }
   $('ratioSet').addEventListener('click', function(e){
     var b = e.target.closest('.ratio');
     if(!b || b.disabled) return;
     ratioId = b.getAttribute('data-r');
-    renderRatios();
-    prepareUpload();          // re-crop from the original, never from a crop
+    recropAll();
   });
 
-  /* Centre-crop to the chosen ratio. Always works from upload.src so switching
-     ratios never compounds crops. */
+  /* Centre-crop to the chosen ratio. Always works from the original file, so
+     switching ratios never compounds crops. */
   function cropImage(file, ratio){
     return new Promise(function(resolve, reject){
       var url = URL.createObjectURL(file);
@@ -860,68 +969,108 @@
     });
   }
 
-  function clearUpload(){
-    if(upload && upload.url) URL.revokeObjectURL(upload.url);
-    upload = null;
-    $('file').value = '';
-    $('fileChip').hidden = true;
-    renderRatios();
-    renderPreview();
+  function applyBlob(m, blob){
+    if(m.objectUrl) URL.revokeObjectURL(m.objectUrl);
+    m.blob = blob;
+    m.size = blob.size;
+    m.mimeType = blob.type || m.src.type || 'application/octet-stream';
+    m.objectUrl = URL.createObjectURL(blob);
   }
 
-  function prepareUpload(){
-    if(!upload) return;
-    var ratio = canCrop() ? ratioValue() : null;
+  function recropAll(){
+    var ratio = ratioValue();
+    var targets = croppable();
+    if(!targets.length){ renderMedia(); return; }
 
-    Promise.resolve(ratio ? cropImage(upload.src, ratio) : upload.src)
-      .then(function(blob){
+    Promise.all(targets.map(function(m){
+      return Promise.resolve(ratio ? cropImage(m.src, ratio) : m.src).then(function(blob){
         if(blob.size > MAX_UPLOAD_BYTES){
-          throw new Error('That comes to ' + prettyBytes(blob.size) + ' after cropping — the limit is 20 MB.');
+          throw new Error('"' + m.name + '" is ' + prettyBytes(blob.size) + ' after cropping — the limit is 20 MB each.');
         }
-        if(upload.url) URL.revokeObjectURL(upload.url);
-        upload.blob = blob;
-        upload.size = blob.size;
-        upload.mimeType = blob.type || upload.src.type || 'application/octet-stream';
-        upload.url = URL.createObjectURL(blob);
-
-        $('fcName').textContent = upload.name;
-        $('fcSize').textContent = prettyBytes(upload.size);
-        $('fileChip').hidden = false;
-        $('fileErr').classList.remove('show');
-        renderPreview();
-      })
+        applyBlob(m, blob);
+      });
+    }))
+      .then(function(){ $('fileErr').classList.remove('show'); renderMedia(); })
       .catch(function(err){
+        ratioId = 'orig';                 // back out of a crop we cannot honour
         $('fileErr').textContent = err.message;
         $('fileErr').classList.add('show');
-        clearUpload();
+        renderMedia();
       });
   }
 
-  function onFile(f){
-    if(!f) return;
-    var isVideo = /^video\//.test(f.type);
-    var isImage = /^image\//.test(f.type);
-    if(!isVideo && !isImage){
-      $('fileErr').textContent = 'That is not an image or a video.';
+  function addFiles(list){
+    var files = [].slice.call(list || []);
+    if(!files.length) return;
+    var room = MAX_MEDIA - media.length;
+    if(room <= 0){
+      $('fileErr').textContent = 'That is already ' + MAX_MEDIA + ' items — remove one first.';
       $('fileErr').classList.add('show');
       return;
     }
-    if(f.size > MAX_UPLOAD_BYTES){
-      $('fileErr').textContent = 'That file is ' + prettyBytes(f.size) + ' — the limit is 20 MB. Paste a Drive link instead.';
+    var rejected = [];
+    files.slice(0, room).forEach(function(f){
+      var isVideo = /^video\//.test(f.type), isImage = /^image\//.test(f.type);
+      if(!isVideo && !isImage){ rejected.push(f.name + ' is not an image or video'); return; }
+      if(f.size > MAX_UPLOAD_BYTES){ rejected.push(f.name + ' is ' + prettyBytes(f.size)); return; }
+      media.push({
+        kind:'file', src:f, blob:f, name:f.name, mimeType:f.type, size:f.size,
+        objectUrl:URL.createObjectURL(f), isVideo:isVideo, isGif:f.type === 'image/gif'
+      });
+    });
+    if(files.length > room) rejected.push('only ' + room + ' more would fit');
+    if(rejected.length){
+      $('fileErr').textContent = 'Skipped — ' + rejected.join('; ') + '.';
       $('fileErr').classList.add('show');
-      return;
+    } else {
+      $('fileErr').classList.remove('show');
     }
-    if(upload && upload.url) URL.revokeObjectURL(upload.url);
-    upload = {
-      src: f, blob: f, name: f.name, mimeType: f.type, size: f.size, url: null,
-      isVideo: isVideo, isGif: f.type === 'image/gif'
-    };
-    renderRatios();
-    prepareUpload();
+    $('file').value = '';
+    recropAll();
   }
 
-  $('file').addEventListener('change', function(){ onFile(this.files[0]); });
-  $('fcX').addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); clearUpload(); });
+  function addLink(){
+    var url = $('drive').value.trim();
+    var id = driveId(url);
+    if(!url || url.indexOf('drive.google.com') === -1 || !id){
+      $('driveErr').textContent = isFolderUrl(url)
+        ? 'That is a folder link — paste the link to a single file inside it.'
+        : 'Enter a valid Google Drive file link.';
+      void $('drive').offsetWidth;
+      $('drive').classList.add('inp-invalid');
+      $('driveErr').classList.add('show');
+      return;
+    }
+    if(media.length >= MAX_MEDIA){
+      $('driveErr').textContent = 'That is already ' + MAX_MEDIA + ' items — remove one first.';
+      $('driveErr').classList.add('show');
+      return;
+    }
+    if(media.some(function(m){ return m.fileId === id; })){
+      $('driveErr').textContent = 'That file is already in the list.';
+      $('driveErr').classList.add('show');
+      return;
+    }
+    media.push({ kind:'link', url:url, fileId:id, name:'Drive file ' + id.slice(0, 10) + '...', isVideo:false, isGif:false });
+    $('drive').value = '';
+    $('drive').classList.remove('inp-invalid');
+    $('driveErr').classList.remove('show');
+    renderMedia();
+  }
+  $('btnAddLink').addEventListener('click', addLink);
+  $('drive').addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); addLink(); }
+  });
+
+  function clearMedia(){
+    media.forEach(function(m){ if(m.objectUrl) URL.revokeObjectURL(m.objectUrl); });
+    media = [];
+    $('file').value = '';
+    $('drive').value = '';
+    renderMedia();
+  }
+
+  $('file').addEventListener('change', function(){ addFiles(this.files); });
   $('drop').addEventListener('keydown', function(e){
     if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); $('file').click(); }
   });
@@ -932,11 +1081,11 @@
     $('drop').addEventListener(ev, function(e){ e.preventDefault(); this.classList.remove('over'); });
   });
   $('drop').addEventListener('drop', function(e){
-    if(e.dataTransfer && e.dataTransfer.files.length) onFile(e.dataTransfer.files[0]);
+    if(e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
   });
 
   /* base64 for the Apps Script payload — done at submit, not on pick, so a
-     27 MB string isn't held in memory while someone edits their caption */
+     stack of encoded files is not held in memory while someone edits a caption */
   function toBase64(blob){
     return new Promise(function(resolve, reject){
       var fr = new FileReader();
@@ -945,7 +1094,15 @@
       fr.readAsDataURL(blob);
     });
   }
-
+  /* Resolves the list into what the payload carries, in display order. */
+  function encodeMedia(){
+    return Promise.all(media.map(function(m){
+      if(m.kind === 'link') return Promise.resolve({ type:'link', url:m.url });
+      return toBase64(m.blob).then(function(b64){
+        return { type:'upload', name:m.name, mimeType:m.mimeType, dataBase64:b64 };
+      });
+    }));
+  }
   /* ---- helpers ---- */
   /* Single files only. A folder id looks identical but there's nothing to
      download behind it, so the automation would fail at the upload step —
@@ -1011,9 +1168,28 @@
     var cap = new Date(); cap.setFullYear(cap.getFullYear() + 1);
     return when.getTime() > cap.getTime();
   }
+  /* Prefill with right now, and keep it honest: an untouched default is
+     refreshed at submit, so a form left open for ten minutes doesn't post a
+     time that has already passed. Once the user picks something, it's theirs. */
+  var schedTouched = false;
+  function fillNow(){
+    var now = new Date();
+    $('schedDate').value = dayStr(now);
+    $('schedTime').value = timeStr(now);
+  }
+  fillNow();
   refreshBounds();
+  renderSched();     // hoisted; shows the "Publishes …" line for the prefill
+
   ['schedDate','schedTime'].forEach(function(id){
     $(id).addEventListener('focus', refreshBounds);
+    /* The native pickers only open from their little icon. showPicker() lets a
+       click anywhere in the field do it — it needs user activation, and throws
+       if the picker is already open, hence the guard. */
+    $(id).addEventListener('click', function(){
+      if(typeof this.showPicker !== 'function') return;
+      try { this.showPicker(); } catch(e){ /* already open, or not allowed */ }
+    });
   });
   /* echo the choice back so nobody has to trust the pickers blind */
   function renderSched(){
@@ -1034,6 +1210,7 @@
   }
   ['schedDate','schedTime'].forEach(function(id){
     $(id).addEventListener('input', function(){
+      schedTouched = true;      // stop refreshing the default from under them
       $('schedDate').classList.remove('inp-invalid');
       $('schedTime').classList.remove('inp-invalid');
       $('schedErr').classList.remove('show');
@@ -1073,33 +1250,41 @@
     if(text.length <= limit) return { text:text, cut:false };
     return { text:text.slice(0, limit).replace(/\s+\S*$/, ''), cut:true };
   }
-  /* What the preview should show: a local upload, a Drive file, or nothing. */
-  function pvSource(){
-    if(mode === 'upload') return upload && upload.url ? { kind:'local' } : { kind:'none' };
-    var id = driveId($('drive').value.trim());
-    return id ? { kind:'drive', id:id } : { kind:'none' };
-  }
+  /* Which item of the carousel the preview is showing. */
+  var pvSlide = 0;
 
-  /* Renders the frame only. For Drive files the src is set later by
+  /* Renders the frame only. For Drive links the src is set later by
      pvLoadMedia() — setting it inside innerHTML means the browser can finish
      (or fail) the request before any listener is attached, which silently
      leaves a blank box. Local uploads have no such race. */
-  function pvMedia(ratio, src){
-    if(src.kind === 'none'){
+  function pvMedia(ratio){
+    if(!media.length){
       return '<div class="pv-media is-empty" style="aspect-ratio:' + ratio + '">' +
                '<span class="pv-media-msg">' +
-               (mode === 'upload' ? 'Choose a file to see the media.' : 'Paste a Google Drive link to see the media.') +
+               (mode === 'upload' ? 'Choose a file to see the media.' : 'Add a Google Drive link to see the media.') +
                '</span></div>';
     }
-    if(src.kind === 'local'){
-      var inner = upload.isVideo
-        ? '<video src="' + pvEsc(upload.url) + '" muted playsinline controls preload="metadata"></video>'
-        : '<img alt="" src="' + pvEsc(upload.url) + '" />';
-      return '<div class="pv-media" style="aspect-ratio:' + ratio + '">' + inner +
+    if(pvSlide >= media.length) pvSlide = 0;
+    var m = media[pvSlide];
+
+    /* Real carousels show position and dots, so the preview does too. */
+    var chrome = media.length > 1
+      ? '<span class="pv-count">' + (pvSlide + 1) + '/' + media.length + '</span>' +
+        '<span class="pv-dots">' + media.map(function(_, i){
+          return '<button type="button" class="pv-dot' + (i === pvSlide ? ' on' : '') +
+                 '" data-slide="' + i + '" aria-label="Item ' + (i + 1) + '"></button>';
+        }).join('') + '</span>'
+      : '';
+
+    if(m.kind === 'file'){
+      var inner = m.isVideo
+        ? '<video src="' + pvEsc(m.objectUrl) + '" muted playsinline controls preload="metadata"></video>'
+        : '<img alt="" src="' + pvEsc(m.objectUrl) + '" />';
+      return '<div class="pv-media" style="aspect-ratio:' + ratio + '">' + inner + chrome +
                '<span class="pv-media-msg"></span></div>';
     }
-    return '<div class="pv-media is-loading" style="aspect-ratio:' + ratio + '" data-id="' + pvEsc(src.id) + '">' +
-             '<img alt="" referrerpolicy="no-referrer" />' +
+    return '<div class="pv-media is-loading" style="aspect-ratio:' + ratio + '" data-id="' + pvEsc(m.fileId) + '">' +
+             '<img alt="" referrerpolicy="no-referrer" />' + chrome +
              '<span class="pv-media-msg">Loading preview…</span>' +
            '</div>';
   }
@@ -1143,10 +1328,9 @@
     var sel = selected();
     var caption = $('caption').value.trim();
     var sec = $('preview');
-    var src = pvSource();
 
     /* nothing meaningful to show yet */
-    if(!sel.length || (!caption && src.kind === 'none')){ sec.hidden = true; return; }
+    if(!sel.length || (!caption && !media.length)){ sec.hidden = true; return; }
     sec.hidden = false;
 
     if(sel.indexOf(pvActive) === -1) pvActive = sel[0];
@@ -1175,7 +1359,7 @@
       var title = ((($('ytTitle').value || caption).replace(/\s+/g, ' ').trim()) || 'Untitled').slice(0, 95);
       var privacy = $('ytPrivacy').value;
       html = '<article class="pv-card pv-yt">' +
-               pvMedia(forced || '16 / 9', src) +
+               pvMedia(forced || '16 / 9') +
                '<div class="pv-yt-meta">' +
                  '<div class="pv-yt-title">' + pvEsc(title) + '</div>' +
                  '<div class="pv-yt-sub">Your channel · ' + pvEsc(privacy) + ' · ' + pvEsc(stamp) + '</div>' +
@@ -1188,7 +1372,7 @@
       var cut = pvCut(caption, cfg.soft);
       var textHtml = '<div class="pv-text">' + (caption ? pvRich(cut.text) : '') +
                      (cut.cut ? '<span class="pv-more"> … ' + cfg.more + '</span>' : '') + '</div>';
-      var mediaHtml = pvMedia(forced || cfg.ratio, src);
+      var mediaHtml = pvMedia(forced || cfg.ratio);
       html = '<article class="pv-card">' +
                '<header class="pv-top">' +
                  '<span class="pv-avatar" style="background:' + p.color + '">' +
@@ -1208,12 +1392,17 @@
     /* A dead thumbnail is the same failure the automation would hit, so surface
        it here rather than letting them find out from a failed row. */
     var note = $('pvNote');
-    note.textContent = src.kind === 'none'
-      ? (mode === 'upload' ? 'Media appears once you choose a file.' : 'Media appears once the Drive link is valid.')
-      : '';
+    note.textContent = media.length ? '' : 'Media appears once you add a file or link.';
     note.classList.remove('warn');
-    if(src.kind === 'drive') pvLoadMedia();
+    pvLoadMedia();
   }
+
+  $('pvBody').addEventListener('click', function(e){
+    var d = e.target.closest('.pv-dot');
+    if(!d) return;
+    pvSlide = +d.getAttribute('data-slide');
+    renderPreview();
+  });
 
   $('pvTabs').addEventListener('click', function(e){
     var tab = e.target.closest('.pv-tab');
@@ -1222,17 +1411,15 @@
     renderPreview();
   });
 
-  function buildPayload(base64){
-    var url = mode === 'link' ? $('drive').value.trim() : '';
+  function buildPayload(items){
     var when = scheduledDate();
     return {
-      driveUrl: url,
-      driveFileId: url ? driveId(url) : null,
-      /* Apps Script writes this to Drive and link-shares it, then the row gets
-         an ordinary Drive URL — the automation never knows the difference. */
-      upload: (mode === 'upload' && upload && base64)
-        ? { name: upload.name, mimeType: upload.mimeType, ratio: canCrop() ? ratioId : 'orig', dataBase64: base64 }
-        : null,
+      /* Ordered list — item 1 is the carousel cover. Apps Script resolves each
+         entry to a Drive URL (uploading the files it needs to) and joins them,
+         so the row still holds plain Drive URLs and the automation is unaware
+         any of this happened. */
+      media: items,
+      ratio: canCrop() ? ratioId : 'orig',
       caption: $('caption').value.trim(),
       platforms: selected(),
       youtube: selected().indexOf('youtube') > -1
@@ -1252,33 +1439,15 @@
     var first = null;
     var url = $('drive').value.trim();
     var badUrl = !url || url.indexOf('drive.google.com') === -1 || !driveId(url);
-
-    /* only the active mode is validated — the other pane's field is irrelevant */
-    if(mode === 'upload'){
-      if(!upload || !upload.blob){
-        $('fileErr').textContent = 'Choose a file to upload.';
-        $('fileErr').classList.add('show');
-        first = first || $('drop');
-      } else {
-        $('fileErr').classList.remove('show');
-      }
-      $('drive').classList.remove('inp-invalid');
-      $('driveErr').classList.remove('show');
+    /* One media item minimum. Per-platform ceilings are NOT blocked here —
+       the automation skips just the platforms that can't take the set. */
+    if(!media.length){
+      var msg = 'Add at least one image or video.';
+      if(mode === 'upload'){ $('fileErr').textContent = msg; $('fileErr').classList.add('show'); first = first || $('drop'); }
+      else { $('driveErr').textContent = msg; $('driveErr').classList.add('show'); first = first || $('drive'); }
     } else {
-      $('drive').classList.remove('inp-invalid');
-      if(badUrl){
-        $('driveErr').textContent = isFolderUrl(url)
-          ? 'That is a folder link — paste the link to a single file inside it.'
-          : 'Enter a valid Google Drive file link.';
-        void $('drive').offsetWidth;               // restart the shake
-        $('drive').classList.add('inp-invalid');
-        $('drive').setAttribute('aria-invalid','true');
-        $('driveErr').classList.add('show');
-        first = first || $('drive');
-      } else {
-        $('drive').removeAttribute('aria-invalid');
-        $('driveErr').classList.remove('show');
-      }
+      $('fileErr').classList.remove('show');
+      $('driveErr').classList.remove('show');
     }
 
     /* An over-limit caption can't be published to that network at all — the
@@ -1304,8 +1473,10 @@
       first = first || $('ddTrigger');
     }
 
-    /* a schedule is required — a minute of slack covers clock skew and the
-       time spent filling the form after picking "now" */
+    /* An untouched default is re-stamped to now, so it can never be stale by
+       the time they submit. A minute of slack covers clock skew and the time
+       spent filling the form after deliberately picking "now". */
+    if(!schedTouched) fillNow();
     var when = scheduledDate();
     $('schedDate').classList.remove('inp-invalid');
     $('schedTime').classList.remove('inp-invalid');
@@ -1444,13 +1615,14 @@
     sending = true;
     btn.classList.add('loading');
     btn.disabled = true;
-    txt.textContent = mode === 'upload' ? 'Uploading file...' : 'Saving to sheet...';
+    var files = media.filter(function(m){ return m.kind === 'file'; }).length;
+    txt.textContent = files ? ('Uploading ' + files + ' file' + (files > 1 ? 's' : '') + '...') : 'Saving to sheet...';
 
     /* Encoding happens here rather than on file pick, so a ~27 MB base64 string
        isn't sitting in memory the whole time someone edits their caption. */
-    Promise.resolve(mode === 'upload' && upload ? toBase64(upload.blob) : '')
-      .then(function(b64){
-        payload = buildPayload(b64);
+    encodeMedia()
+      .then(function(items){
+        payload = buildPayload(items);
         txt.textContent = 'Saving to sheet...';
         /* text/plain keeps this a "simple request" — no OPTIONS preflight,
            which Apps Script web apps cannot respond to. */
@@ -1485,9 +1657,10 @@
         $('caption').value = '';
         $('drive').value = '';
         $('ytTitle').value = '';
-        $('schedDate').value = '';
-        $('schedTime').value = '';
-        clearUpload();          // also revokes the object URL and redraws the preview
+        fillNow();              // back to "now", not blank
+        schedTouched = false;
+        refreshBounds();
+        clearMedia();           // revokes every object URL and redraws the preview
         renderCounts();
         renderSched();
         renderPreview();

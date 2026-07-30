@@ -60,7 +60,7 @@ already in the sheet.
 | `youtube` | form | **add** (v2 only) |
 | `post at` | form | **add** — publish time, UTC ISO string |
 | `status` | form + **you** | already there. Form writes `For review`; you move it to `Publish` |
-| `post status` | n8n | **add** — `processing` / `posted` / `partial` / `submitted` / `failed` / `skipped` |
+| `post status` | form + n8n | **add** — Apps Script writes `queued`; n8n moves it to `processing` → `posted` / `partial` / `submitted` / `failed` / `skipped` |
 | `result` | n8n | **add** — per-platform outcome and post URLs |
 | `processed at` | n8n | **add** — when n8n finished |
 
@@ -163,26 +163,37 @@ matter who filled the form or from where. The form echoes the choice back
 Both workflows gate on that column:
 
 ```
-Get new rows (status = Publish)
+Get new rows (post status = queued)      ← published rows never even reach n8n
       │
- Prepare jobs ──▶ Already handled? ──true──▶ Nothing to do   ← post status not blank
-      │                   │
-      │                 false
-      │                   ▼
-      │              Valid row? ──false──▶ Invalid result ──▶ post status: failed
-      │                   │
-      │                 true
-      │                   ▼
-      │               Due yet? ──false──▶ Nothing to do      ← dead end, row untouched
-      │                   │
-      ▼                 true
-                          ▼
-                   Mark processing ──▶ publish…
+ Prepare jobs ──▶ Approved? ──false──▶ Nothing to do   ← status isn't Publish,
+      │                │                                 or a run already claimed it
+      │              true
+      │                ▼
+      │           Valid row? ──false──▶ Invalid result ──▶ post status: failed
+      │                │
+      │              true
+      │                ▼
+      │            Due yet? ──false──▶ Nothing to do    ← dead end, row untouched
+      │                │
+      ▼              true
+                       ▼
+                Mark processing ──▶ publish…
 ```
 
 **A row that isn't due yet is left completely alone** — nothing written back at all. It
-keeps its blank `post status` and gets re-checked on the next sweep. That's the whole
+keeps `post status: queued` and gets re-checked on the next sweep. That's the whole
 mechanism, and it's why the sweep runs every minute.
+
+**The read is filtered on `post status = queued`, not on `status`.** That matters for
+scale: `status` stays on `Publish` forever after a post goes out, so filtering on it would
+re-fetch every row ever published, on every sweep, growing without limit. Filtering on
+`queued` means the query only ever returns work that still needs doing — the sweep costs
+the same whether the sheet holds 10 rows or 10,000. Approval is then checked in code, since
+`Prepare jobs` has the row in hand anyway.
+
+A consequence worth knowing: **a row with a blank `post status` is never fetched.** Apps
+Script fills it automatically, so this only affects rows added by hand — type `queued` into
+that cell and the next sweep picks them up.
 
 Consequences worth knowing:
 
@@ -206,7 +217,8 @@ date value, so a hand-typed cell still works.
 
 | Value | Means |
 |---|---|
-| *(blank)* | never picked up. Either `status` isn't `Publish`, or `post at` hasn't arrived |
+| `queued` | waiting. Either `status` isn't `Publish` yet, or `post at` hasn't arrived |
+| *(blank)* | added by hand — **never fetched**; set it to `queued` |
 | `processing` | claimed by a run, so an overlapping sweep can't publish it twice |
 | `posted` | every selected platform confirmed live |
 | `partial` | some platforms went out, some didn't — `result` names which |
@@ -251,10 +263,13 @@ failing with a vague error:
 
 ### Resetting a stuck row
 
-If n8n dies mid-run a row can sit at `processing` forever. **Clear the `post status` cell**
-and the next sweep retries it (`status` is already `Publish`). Nothing dedupes against
-already-published posts, so only do that for rows you know didn't go out — and a retry
-re-publishes to *every* ticked platform, including ones that already succeeded.
+If n8n dies mid-run a row can sit at `processing` forever. **Set `post status` back to
+`queued`** and the next sweep retries it (`status` is already `Publish`). Don't clear the
+cell — a blank one is never fetched.
+
+Nothing dedupes against already-published posts, so only do that for rows you know didn't
+go out — and a retry re-publishes to *every* ticked platform, including ones that already
+succeeded.
 
 To cancel a row before it fires, move `status` away from `Publish`, or clear `post at` and
 change your mind — either way n8n stops considering it.
