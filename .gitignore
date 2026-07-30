@@ -1,0 +1,9 @@
+# Created by `vercel link` / `vercel deploy` — holds the project and org ids
+# for whichever account ran it, so it should stay out of a shared repo.
+.vercel
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+.vercel

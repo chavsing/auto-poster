@@ -1,0 +1,6 @@
+# Only index.html is the website. Everything else here is source that would
+# otherwise be served publicly — AppsScript.gs holds the sheet id and the n8n
+# JSON exposes the whole automation layout. Neither belongs on a public URL.
+AppsScript.gs
+n8n/
+.git

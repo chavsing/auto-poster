@@ -28,6 +28,17 @@ var SHARED_TOKEN = '';  // optional: set a password here AND in index.html's AUT
    /exec URL keeps running the old code. */
 var NEW_STATUS = 'For review';
 
+/* Uploaded files land here, in the Drive of whoever deployed this script.
+   Created on first use. Every file is link-shared, because the automation
+   fetches it over the public internet. */
+var UPLOAD_FOLDER = 'AutoPost uploads';
+var MAX_UPLOAD_MB = 20;
+
+/* Bump this whenever you change this file. Opening the /exec URL in a browser
+   shows the version that is actually LIVE — which is the deployed one, not the
+   one in the editor. If it doesn't match, the deployment wasn't updated. */
+var VERSION = '3-uploads';
+
 /* Column headers are matched case-insensitively against these aliases.
    Add a column to the sheet with any of these names and it fills itself in. */
 var FIELD_ALIASES = {
@@ -68,8 +79,17 @@ function doPost(e) {
     if (SHARED_TOKEN && body.token !== SHARED_TOKEN) {
       return respond({ ok: false, error: 'Unauthorized.' });
     }
+    /* An upload becomes a Drive file here, so everything downstream — this
+       script's own row builder, n8n, Blotato — only ever sees a Drive URL. */
+    if (body.upload && body.upload.dataBase64) {
+      var saved = saveUpload(body.upload);
+      if (!saved.ok) return respond({ ok: false, error: saved.error });
+      body.driveUrl = saved.url;
+      body.driveFileId = saved.id;
+    }
+
     if (!body.driveUrl || !body.caption) {
-      return respond({ ok: false, error: 'driveUrl and caption are required.' });
+      return respond({ ok: false, error: 'A Drive link or an uploaded file, plus a caption, are required.' });
     }
 
     var ss = SpreadsheetApp.openById(SHEET_ID);
@@ -126,6 +146,63 @@ function cellFor(header, body, platforms) {
 }
 
 /**
+ * Save a base64 upload into Drive and link-share it.
+ *
+ * The share step is not optional: the publishing automation downloads the file
+ * over the public internet, so a private file fails there rather than here.
+ */
+function saveUpload(up) {
+  try {
+    // base64 carries ~4 chars per 3 bytes, so back out the real size
+    var bytes = Math.floor(String(up.dataBase64).length * 3 / 4);
+    if (bytes > MAX_UPLOAD_MB * 1024 * 1024) {
+      return { ok: false, error: 'Upload is larger than ' + MAX_UPLOAD_MB + ' MB.' };
+    }
+
+    var blob = Utilities.newBlob(
+      Utilities.base64Decode(up.dataBase64),
+      up.mimeType || 'application/octet-stream',
+      up.name || 'autopost-upload'
+    );
+
+    var file = getUploadFolder().createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    return {
+      ok: true,
+      id: file.getId(),
+      url: 'https://drive.google.com/file/d/' + file.getId() + '/view?usp=sharing'
+    };
+  } catch (err) {
+    return { ok: false, error: 'Upload failed: ' + String(err && err.message || err) };
+  }
+}
+
+function getUploadFolder() {
+  var found = DriveApp.getFoldersByName(UPLOAD_FOLDER);
+  return found.hasNext() ? found.next() : DriveApp.createFolder(UPLOAD_FOLDER);
+}
+
+/**
+ * RUN THIS ONCE from the editor after adding upload support:
+ *   toolbar function dropdown > authorizeDrive > Run
+ *
+ * Deploying does NOT ask for permissions — only running a function does. Until
+ * you run this, the web app keeps the narrower grant it was given before
+ * DriveApp was used here, and every upload fails with
+ * "no permission to call DriveApp.getFoldersByName".
+ *
+ * It also creates the upload folder, so you can confirm it landed in the right
+ * Drive account.
+ */
+function authorizeDrive() {
+  var folder = getUploadFolder();
+  Logger.log('Upload folder ready: "' + folder.getName() + '"  id=' + folder.getId());
+  Logger.log('Running as: ' + Session.getEffectiveUser().getEmail());
+  return folder.getUrl();
+}
+
+/**
  * Write the schedule as plain text.
  *
  * appendRow would let Sheets coerce "2026-08-01T09:30:00Z" into a date value
@@ -163,7 +240,13 @@ function respond(obj) {
 
 /** Visiting the /exec URL in a browser shows this — handy to confirm the deployment is live. */
 function doGet() {
-  return respond({ ok: true, service: 'AutoPost sheet endpoint', ready: true });
+  return respond({
+    ok: true,
+    service: 'AutoPost sheet endpoint',
+    version: VERSION,
+    uploads: true,
+    ready: true
+  });
 }
 
 /** Run this from the Apps Script editor to test without the form. */

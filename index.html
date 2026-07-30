@@ -180,6 +180,64 @@
     -webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 1 21h22L12 2zm0 6v7m0 3v.5' stroke='%23000' stroke-width='2.2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat;
     mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 1 21h22L12 2zm0 6v7m0 3v.5' stroke='%23000' stroke-width='2.2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") center/contain no-repeat}
 
+  /* ---------- link / upload switch ---------- */
+  .seg{display:inline-flex;gap:3px;padding:3px;margin-bottom:11px;background:rgba(0,0,0,.32);border:1px solid var(--stroke);border-radius:11px}
+  .seg-btn{
+    background:none;border:0;color:var(--muted);font:inherit;font-size:12.5px;font-weight:640;
+    padding:8px 15px;min-height:36px;border-radius:8px;cursor:pointer;
+    transition:color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  .seg-btn:hover{color:var(--text)}
+  .seg-btn.on{background:rgba(255,255,255,.1);color:var(--text)}
+
+  /* ---------- drop zone ---------- */
+  .drop{
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+    padding:26px 20px;min-height:150px;cursor:pointer;text-align:center;
+    background:rgba(0,0,0,.24);border:1.5px dashed var(--stroke-2);border-radius:14px;color:var(--muted);
+    transition:border-color var(--t) var(--ease-out),background var(--t) var(--ease-out),color var(--t) var(--ease-out);
+  }
+  .drop:hover,.drop:focus-visible{border-color:var(--brand);background:rgba(109,94,252,.07);color:var(--text)}
+  .drop.over{border-color:var(--brand-2);background:rgba(34,211,238,.09);color:var(--text)}
+  .drop svg{width:26px;height:26px;opacity:.7;margin-bottom:3px}
+  .drop-t{font-size:14px;font-weight:640}
+  .drop-s{font-size:12px;opacity:.75}
+
+  .filechip{
+    display:flex;align-items:center;gap:10px;margin-top:11px;padding:10px 10px 10px 14px;
+    background:rgba(255,255,255,.05);border:1px solid var(--stroke);border-radius:12px;
+    animation:pop var(--t) var(--ease-spring);
+  }
+  /* a class-level display beats the UA sheet's [hidden]{display:none}, so the
+     hidden attribute has to be honoured explicitly or the chip never goes away */
+  .filechip[hidden]{display:none}
+  .fc-name{flex:1;min-width:0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fc-size{font-size:12px;color:var(--muted);flex:0 0 auto;font-variant-numeric:tabular-nums}
+  .fc-x{
+    flex:0 0 auto;width:36px;height:36px;display:grid;place-items:center;
+    background:none;border:0;border-radius:9px;cursor:pointer;color:var(--muted);
+    transition:color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  .fc-x:hover{color:var(--err);background:rgba(255,95,112,.12)}
+  .fc-x svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round}
+
+  /* ---------- aspect ratio ---------- */
+  .ratios{display:flex;align-items:center;gap:11px;margin-top:14px;flex-wrap:wrap}
+  .ratios-lab{font-size:12.5px;font-weight:640;color:var(--muted);flex:0 0 auto}
+  .ratio-set{display:flex;flex-wrap:wrap;gap:6px}
+  .ratio{
+    background:rgba(0,0,0,.3);border:1px solid var(--stroke);color:var(--muted);
+    font:inherit;font-size:12px;font-weight:640;padding:7px 12px;min-height:34px;border-radius:9px;cursor:pointer;
+    font-variant-numeric:tabular-nums;
+    transition:color var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
+  }
+  .ratio:hover:not(:disabled){border-color:var(--stroke-2);color:var(--text)}
+  .ratio:active:not(:disabled){transform:scale(.96)}
+  .ratio.on{background:var(--brand);border-color:var(--brand);color:#fff}
+  .ratio:disabled{opacity:.4;cursor:not-allowed}
+  .ratio-note{margin:9px 0 0;font-size:12px;color:var(--muted);min-height:1.1em}
+  .ratio-note.warn{color:#ffa3ad}
+
   /* ---------- platform multi-select ---------- */
   .dd{position:relative}
   .dd-trigger{
@@ -363,6 +421,73 @@
   .del:focus-visible{opacity:1}
   .del:active{transform:scale(.92)}
   .del svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round}
+  /* ==========================================================
+     LIVE PREVIEW
+     Deliberately rendered on a light surface: it should read as
+     "this is the post", not as more of the app's chrome.
+     ========================================================== */
+  .preview{margin-top:34px}
+  .pv-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+  .pv-head h3{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:0;font-weight:700}
+  .pv-tabs{display:flex;flex-wrap:wrap;gap:6px}
+  .pv-tab{
+    display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+    background:var(--surface);border:1px solid var(--stroke);color:var(--muted);
+    font:inherit;font-size:12px;font-weight:640;padding:7px 12px;border-radius:999px;
+    transition:color var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  .pv-tab:hover{border-color:var(--stroke-2);color:var(--text)}
+  .pv-tab.on{background:rgba(255,255,255,.11);border-color:var(--stroke-2);color:var(--text)}
+  .pv-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+
+  .pv-card{
+    max-width:520px;margin:0 auto;overflow:hidden;
+    background:#fff;color:#1c1e21;border-radius:14px;
+    box-shadow:0 24px 60px -24px rgba(0,0,0,.85);
+    font-size:14px;line-height:1.45;
+    animation:rise .34s var(--ease-out);
+  }
+  .pv-top{display:flex;align-items:center;gap:10px;padding:13px 15px 10px}
+  .pv-avatar{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto}
+  .pv-avatar svg{width:19px;height:19px;fill:#fff}
+  .pv-name{display:block;font-weight:650;font-size:14px;color:#1c1e21}
+  .pv-time{display:block;font-size:12px;color:#65676b;font-variant-numeric:tabular-nums}
+  .pv-text{padding:2px 15px 12px;white-space:pre-wrap;word-break:break-word}
+  .pv-link{color:#1877F2}
+  .pv-more{color:#65676b;cursor:default}
+  .pv-media{
+    position:relative;width:100%;background:#e4e6eb;
+    display:grid;place-items:center;overflow:hidden;
+  }
+  .pv-media img{width:100%;height:100%;object-fit:cover;display:block}
+  .pv-media-msg{
+    position:absolute;inset:0;display:none;place-items:center;text-align:center;
+    padding:20px;font-size:12.5px;color:#65676b;line-height:1.5;
+  }
+  .pv-media.is-empty .pv-media-msg,
+  .pv-media.is-loading .pv-media-msg,
+  .pv-media.is-fail .pv-media-msg{display:grid}
+  .pv-media.is-fail img,
+  .pv-media.is-loading img{display:none}
+  .pv-actions{
+    display:flex;gap:18px;padding:10px 15px;border-top:1px solid #e4e6eb;
+    font-size:12.5px;font-weight:600;color:#65676b;
+  }
+
+  /* youtube reads as an upload, not a feed post */
+  .pv-card.pv-yt{background:#0f0f0f;color:#f1f1f1}
+  .pv-yt .pv-media{background:#272727}
+  .pv-yt-meta{padding:13px 15px 4px}
+  .pv-yt-title{font-size:15.5px;font-weight:650;line-height:1.3}
+  .pv-yt-sub{font-size:12.5px;color:#aaa;margin-top:5px}
+  .pv-yt .pv-text{color:#d0d0d0;font-size:13px;padding-top:8px}
+  .pv-yt .pv-actions{border-top-color:#272727;color:#aaa}
+
+  .pv-note{
+    text-align:center;font-size:12px;color:var(--muted);margin:12px auto 0;max-width:520px;min-height:1.2em;
+  }
+  .pv-note.warn{color:#ffa3ad}
+
   .foot{text-align:center;color:#5b6379;font-size:12px;margin-top:44px}
   .foot a{color:var(--muted);text-decoration:none;border-bottom:1px solid var(--stroke-2);transition:color var(--t-fast) var(--ease-out)}
   .foot a:hover{color:var(--text)}
@@ -409,10 +534,43 @@
   <form class="card rv" id="form" style="--d:250ms" novalidate>
 
     <div class="field">
-      <label class="lab" for="drive">Google Drive URL <span class="hint">image or video — shared "anyone with the link"</span></label>
-      <input type="url" id="drive" name="drive" inputmode="url" autocomplete="off" aria-describedby="driveErr"
-             placeholder="https://drive.google.com/file/d/1AbC.../view?usp=sharing" />
-      <p class="err-msg" id="driveErr" role="alert">Enter a valid Google Drive file link.</p>
+      <label class="lab">Media <span class="hint" id="mediaHint">image or video</span></label>
+
+      <div class="seg" role="tablist" aria-label="How to provide the media">
+        <button type="button" class="seg-btn on" id="modeLink" role="tab" aria-selected="true">Drive link</button>
+        <button type="button" class="seg-btn" id="modeUpload" role="tab" aria-selected="false">Upload file</button>
+      </div>
+
+      <div id="paneLink">
+        <input type="url" id="drive" name="drive" inputmode="url" autocomplete="off" aria-describedby="driveErr"
+               placeholder="https://drive.google.com/file/d/1AbC.../view?usp=sharing" />
+        <p class="err-msg" id="driveErr" role="alert">Enter a valid Google Drive file link.</p>
+      </div>
+
+      <div id="paneUpload" hidden>
+        <label class="drop" id="drop" tabindex="0" role="button" aria-describedby="fileErr">
+          <input type="file" id="file" accept="image/*,video/*" hidden />
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17,8 12,3 7,8"/><line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span class="drop-t">Choose a file, or drop it here</span>
+          <span class="drop-s">Images and video, up to 20 MB</span>
+        </label>
+        <div class="filechip" id="fileChip" hidden>
+          <span class="fc-name" id="fcName"></span>
+          <span class="fc-size" id="fcSize"></span>
+          <button type="button" class="fc-x" id="fcX" aria-label="Remove the selected file">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"/></svg>
+          </button>
+        </div>
+        <p class="err-msg" id="fileErr" role="alert">Choose a file to upload.</p>
+      </div>
+
+      <div class="ratios">
+        <span class="ratios-lab">Crop to</span>
+        <div class="ratio-set" id="ratioSet"></div>
+      </div>
+      <p class="ratio-note" id="ratioNote"></p>
     </div>
 
     <div class="field">
@@ -467,6 +625,15 @@
       <span class="txt">Save to sheet</span>
     </button>
   </form>
+
+  <section class="preview" id="preview" hidden aria-label="Post preview">
+    <div class="pv-head">
+      <h3>Preview</h3>
+      <div class="pv-tabs" id="pvTabs" role="tablist"></div>
+    </div>
+    <div id="pvBody"></div>
+    <p class="pv-note" id="pvNote" aria-live="polite"></p>
+  </section>
 
   <section class="hist" id="hist" hidden>
     <div class="hist-head">
@@ -528,6 +695,7 @@
       $('platErr').classList.remove('show');
       renderLabel();
       renderCounts();
+      renderPreview();
     });
     platsEl.appendChild(l);
   });
@@ -582,7 +750,201 @@
       return '<span class="tag'+(over?' over':'')+'">'+p.name+' '+len.toLocaleString()+'/'+p.limit.toLocaleString()+(over?' — too long':'')+'</span>';
     }).join('');
   }
-  $('caption').addEventListener('input', function(){ renderCounts(); $('capErr').classList.remove('show'); });
+  $('caption').addEventListener('input', function(){ renderCounts(); renderPreview(); $('capErr').classList.remove('show'); });
+
+  /* ---- media: link or upload ----------------------------------------
+     Uploads are base64'd to Apps Script, which writes them to Drive and
+     link-shares them. The row still ends up holding an ordinary Drive
+     URL, so n8n and Blotato need no knowledge of any of this.
+     20 MB is the practical ceiling on an Apps Script request body once
+     base64 has inflated the bytes by a third.
+     ------------------------------------------------------------------ */
+  var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+  var RATIOS = [
+    { id:'orig', name:'Original', v:null },
+    { id:'1x1',  name:'1:1',      v:1 },
+    { id:'4x5',  name:'4:5',      v:0.8 },
+    { id:'16x9', name:'16:9',     v:16/9 },
+    { id:'9x16', name:'9:16',     v:9/16 }
+  ];
+  var mode = 'link';        // 'link' | 'upload'
+  var ratioId = 'orig';
+  var upload = null;        // { src, blob, name, mimeType, size, url, isVideo, isGif }
+
+  function ratioValue(){
+    var r = RATIOS.filter(function(x){ return x.id === ratioId; })[0];
+    return r ? r.v : null;
+  }
+  function prettyBytes(n){
+    return n < 1024*1024 ? Math.round(n/1024) + ' KB' : (n/1048576).toFixed(1) + ' MB';
+  }
+  /* Cropping needs pixels we can only reach for a still image. Animated GIFs
+     are excluded because canvas would flatten them to the first frame. */
+  function canCrop(){
+    return mode === 'upload' && upload && !upload.isVideo && !upload.isGif;
+  }
+
+  function setMode(m){
+    mode = m;
+    $('modeLink').classList.toggle('on', m === 'link');
+    $('modeUpload').classList.toggle('on', m === 'upload');
+    $('modeLink').setAttribute('aria-selected', m === 'link');
+    $('modeUpload').setAttribute('aria-selected', m === 'upload');
+    $('paneLink').hidden = m !== 'link';
+    $('paneUpload').hidden = m !== 'upload';
+    $('mediaHint').textContent = m === 'link'
+      ? 'image or video — shared "anyone with the link"'
+      : 'image or video — up to 20 MB';
+    $('driveErr').classList.remove('show');
+    $('fileErr').classList.remove('show');
+    renderRatios();
+    renderPreview();
+  }
+  $('modeLink').addEventListener('click', function(){ setMode('link'); });
+  $('modeUpload').addEventListener('click', function(){ setMode('upload'); });
+
+  function renderRatios(){
+    var enabled = canCrop();
+    $('ratioSet').innerHTML = RATIOS.map(function(r){
+      return '<button type="button" class="ratio' + (r.id === ratioId ? ' on' : '') + '"' +
+             ' data-r="' + r.id + '"' + (enabled ? '' : ' disabled') +
+             ' aria-pressed="' + (r.id === ratioId) + '">' + r.name + '</button>';
+    }).join('');
+
+    var note = $('ratioNote');
+    note.classList.remove('warn');
+    if(enabled){
+      note.textContent = ratioId === 'orig'
+        ? 'The file is uploaded as-is.'
+        : 'The image is cropped from the centre before upload, so every channel gets this shape.';
+    } else if(mode === 'link'){
+      note.textContent = 'Cropping only applies to uploads — a Drive link is published as it is.';
+    } else if(upload && upload.isVideo){
+      note.textContent = 'Video can\'t be re-encoded in the browser, so it uploads unchanged.';
+    } else if(upload && upload.isGif){
+      note.textContent = 'Cropping a GIF would drop the animation, so it uploads unchanged.';
+    } else {
+      note.textContent = 'Choose a file to enable cropping.';
+    }
+  }
+  $('ratioSet').addEventListener('click', function(e){
+    var b = e.target.closest('.ratio');
+    if(!b || b.disabled) return;
+    ratioId = b.getAttribute('data-r');
+    renderRatios();
+    prepareUpload();          // re-crop from the original, never from a crop
+  });
+
+  /* Centre-crop to the chosen ratio. Always works from upload.src so switching
+     ratios never compounds crops. */
+  function cropImage(file, ratio){
+    return new Promise(function(resolve, reject){
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function(){
+        var sw = img.naturalWidth, sh = img.naturalHeight, tw, th;
+        if(sw / sh > ratio){ th = sh; tw = Math.round(sh * ratio); }
+        else               { tw = sw; th = Math.round(sw / ratio); }
+        var cv = document.createElement('canvas');
+        cv.width = tw; cv.height = th;
+        cv.getContext('2d').drawImage(img, Math.round((sw-tw)/2), Math.round((sh-th)/2), tw, th, 0, 0, tw, th);
+        URL.revokeObjectURL(url);
+        /* keep PNG/WebP so transparency survives; anything else becomes JPEG */
+        var out = (file.type === 'image/png' || file.type === 'image/webp') ? file.type : 'image/jpeg';
+        cv.toBlob(function(blob){
+          blob ? resolve(blob) : reject(new Error('Could not crop this image.'));
+        }, out, 0.92);
+      };
+      img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error('Could not read this image.')); };
+      img.src = url;
+    });
+  }
+
+  function clearUpload(){
+    if(upload && upload.url) URL.revokeObjectURL(upload.url);
+    upload = null;
+    $('file').value = '';
+    $('fileChip').hidden = true;
+    renderRatios();
+    renderPreview();
+  }
+
+  function prepareUpload(){
+    if(!upload) return;
+    var ratio = canCrop() ? ratioValue() : null;
+
+    Promise.resolve(ratio ? cropImage(upload.src, ratio) : upload.src)
+      .then(function(blob){
+        if(blob.size > MAX_UPLOAD_BYTES){
+          throw new Error('That comes to ' + prettyBytes(blob.size) + ' after cropping — the limit is 20 MB.');
+        }
+        if(upload.url) URL.revokeObjectURL(upload.url);
+        upload.blob = blob;
+        upload.size = blob.size;
+        upload.mimeType = blob.type || upload.src.type || 'application/octet-stream';
+        upload.url = URL.createObjectURL(blob);
+
+        $('fcName').textContent = upload.name;
+        $('fcSize').textContent = prettyBytes(upload.size);
+        $('fileChip').hidden = false;
+        $('fileErr').classList.remove('show');
+        renderPreview();
+      })
+      .catch(function(err){
+        $('fileErr').textContent = err.message;
+        $('fileErr').classList.add('show');
+        clearUpload();
+      });
+  }
+
+  function onFile(f){
+    if(!f) return;
+    var isVideo = /^video\//.test(f.type);
+    var isImage = /^image\//.test(f.type);
+    if(!isVideo && !isImage){
+      $('fileErr').textContent = 'That is not an image or a video.';
+      $('fileErr').classList.add('show');
+      return;
+    }
+    if(f.size > MAX_UPLOAD_BYTES){
+      $('fileErr').textContent = 'That file is ' + prettyBytes(f.size) + ' — the limit is 20 MB. Paste a Drive link instead.';
+      $('fileErr').classList.add('show');
+      return;
+    }
+    if(upload && upload.url) URL.revokeObjectURL(upload.url);
+    upload = {
+      src: f, blob: f, name: f.name, mimeType: f.type, size: f.size, url: null,
+      isVideo: isVideo, isGif: f.type === 'image/gif'
+    };
+    renderRatios();
+    prepareUpload();
+  }
+
+  $('file').addEventListener('change', function(){ onFile(this.files[0]); });
+  $('fcX').addEventListener('click', function(e){ e.preventDefault(); e.stopPropagation(); clearUpload(); });
+  $('drop').addEventListener('keydown', function(e){
+    if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); $('file').click(); }
+  });
+  ['dragenter','dragover'].forEach(function(ev){
+    $('drop').addEventListener(ev, function(e){ e.preventDefault(); this.classList.add('over'); });
+  });
+  ['dragleave','drop'].forEach(function(ev){
+    $('drop').addEventListener(ev, function(e){ e.preventDefault(); this.classList.remove('over'); });
+  });
+  $('drop').addEventListener('drop', function(e){
+    if(e.dataTransfer && e.dataTransfer.files.length) onFile(e.dataTransfer.files[0]);
+  });
+
+  /* base64 for the Apps Script payload — done at submit, not on pick, so a
+     27 MB string isn't held in memory while someone edits their caption */
+  function toBase64(blob){
+    return new Promise(function(resolve, reject){
+      var fr = new FileReader();
+      fr.onload = function(){ resolve(String(fr.result).split(',')[1] || ''); };
+      fr.onerror = function(){ reject(new Error('Could not read the file for upload.')); };
+      fr.readAsDataURL(blob);
+    });
+  }
 
   /* ---- helpers ---- */
   /* Single files only. A folder id looks identical but there's nothing to
@@ -677,15 +1039,200 @@
       $('schedErr').classList.remove('show');
       refreshBounds();
       renderSched();
+      renderPreview();
     });
   });
 
-  function buildPayload(){
-    var url = $('drive').value.trim();
+  /* ---- live preview -------------------------------------------------
+     Each network truncates captions at a different point and stacks
+     media differently, so the preview mirrors those rules rather than
+     showing one generic card. The soft limits below are where each
+     network collapses long text behind a "see more", not the hard
+     character caps (those live in PLATFORMS and are enforced on submit).
+     ------------------------------------------------------------------ */
+  var PV = {
+    facebook: { soft:477, ratio:'16 / 9', below:false, more:'See more',   who:'Your Page',   acts:['Like','Comment','Share'] },
+    instagram:{ soft:125, ratio:'1 / 1',  below:true,  more:'more',       who:'yourhandle',  acts:['Like','Comment','Send'] },
+    twitter:  { soft:280, ratio:'16 / 9', below:false, more:'Show more',  who:'@yourhandle', acts:['Reply','Repost','Like'] },
+    linkedin: { soft:210, ratio:'16 / 9', below:false, more:'see more',   who:'Your Page',   acts:['Like','Comment','Repost','Send'] }
+  };
+  var pvActive = null;
+
+  function pvEsc(s){
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  /* hashtags, mentions and links get the accent colour real posts give them */
+  function pvRich(s){
+    return pvEsc(s)
+      .replace(/(https?:\/\/[^\s<]+)/g, '<span class="pv-link">$1</span>')
+      .replace(/(^|\s)(#[\wÀ-ɏ]+)/g, '$1<span class="pv-link">$2</span>')
+      .replace(/(^|\s)(@[\w.]+)/g, '$1<span class="pv-link">$2</span>');
+  }
+  /* cut on a word boundary so the ellipsis doesn't land mid-word */
+  function pvCut(text, limit){
+    if(text.length <= limit) return { text:text, cut:false };
+    return { text:text.slice(0, limit).replace(/\s+\S*$/, ''), cut:true };
+  }
+  /* What the preview should show: a local upload, a Drive file, or nothing. */
+  function pvSource(){
+    if(mode === 'upload') return upload && upload.url ? { kind:'local' } : { kind:'none' };
+    var id = driveId($('drive').value.trim());
+    return id ? { kind:'drive', id:id } : { kind:'none' };
+  }
+
+  /* Renders the frame only. For Drive files the src is set later by
+     pvLoadMedia() — setting it inside innerHTML means the browser can finish
+     (or fail) the request before any listener is attached, which silently
+     leaves a blank box. Local uploads have no such race. */
+  function pvMedia(ratio, src){
+    if(src.kind === 'none'){
+      return '<div class="pv-media is-empty" style="aspect-ratio:' + ratio + '">' +
+               '<span class="pv-media-msg">' +
+               (mode === 'upload' ? 'Choose a file to see the media.' : 'Paste a Google Drive link to see the media.') +
+               '</span></div>';
+    }
+    if(src.kind === 'local'){
+      var inner = upload.isVideo
+        ? '<video src="' + pvEsc(upload.url) + '" muted playsinline controls preload="metadata"></video>'
+        : '<img alt="" src="' + pvEsc(upload.url) + '" />';
+      return '<div class="pv-media" style="aspect-ratio:' + ratio + '">' + inner +
+               '<span class="pv-media-msg"></span></div>';
+    }
+    return '<div class="pv-media is-loading" style="aspect-ratio:' + ratio + '" data-id="' + pvEsc(src.id) + '">' +
+             '<img alt="" referrerpolicy="no-referrer" />' +
+             '<span class="pv-media-msg">Loading preview…</span>' +
+           '</div>';
+  }
+
+  /* Drive serves thumbnails from two different hosts and either can refuse
+     depending on the file. Try both before calling it a failure. */
+  function pvLoadMedia(){
+    var box = $('pvBody').querySelector('.pv-media[data-id]');
+    if(!box) return;
+
+    var id   = box.getAttribute('data-id');
+    var img  = box.querySelector('img');
+    var msg  = box.querySelector('.pv-media-msg');
+    var note = $('pvNote');
+    var srcs = [
+      'https://drive.google.com/thumbnail?id=' + id + '&sz=w800',
+      'https://lh3.googleusercontent.com/d/' + id + '=w800'
+    ];
+    var i = 0;
+
+    img.addEventListener('load', function(){
+      if(!img.naturalWidth) return;               // some hosts 200 with an empty body
+      box.classList.remove('is-loading', 'is-fail');
+      note.textContent = '';
+      note.classList.remove('warn');
+    });
+
+    img.addEventListener('error', function(){
+      if(i < srcs.length){ img.src = srcs[i++]; return; }   // try the other host
+      box.classList.remove('is-loading');
+      box.classList.add('is-fail');
+      msg.innerHTML = 'Couldn\'t load the media.';
+      note.textContent = 'The preview couldn\'t fetch this file. Check the link points at a real file and that sharing is set to "Anyone with the link" — the automation fetches it the same way.';
+      note.classList.add('warn');
+    });
+
+    img.src = srcs[i++];                           // listeners are attached first
+  }
+
+  function renderPreview(){
+    var sel = selected();
+    var caption = $('caption').value.trim();
+    var sec = $('preview');
+    var src = pvSource();
+
+    /* nothing meaningful to show yet */
+    if(!sel.length || (!caption && src.kind === 'none')){ sec.hidden = true; return; }
+    sec.hidden = false;
+
+    if(sel.indexOf(pvActive) === -1) pvActive = sel[0];
+
+    $('pvTabs').innerHTML = sel.map(function(id){
+      var p = meta(id);
+      return '<button type="button" class="pv-tab' + (id === pvActive ? ' on' : '') + '"' +
+             ' data-p="' + id + '" role="tab" aria-selected="' + (id === pvActive) + '">' +
+             '<span class="pv-dot" style="background:' + p.color + '"></span>' + p.name + '</button>';
+    }).join('');
+
+    /* A chosen crop wins over the platform default — the file really is that
+       shape, so showing anything else would misrepresent the post. */
+    var forced = canCrop() ? ratioValue() : null;
+
+    var when = scheduledDate();
+    var stamp = when
+      ? when.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
+      : 'Not scheduled';
+
+    var p = meta(pvActive), html;
+
+    if(pvActive === 'youtube'){
+      /* mirrors what the automation actually sends: title falls back to the
+         caption's first 95 chars, privacy comes from the dropdown */
+      var title = ((($('ytTitle').value || caption).replace(/\s+/g, ' ').trim()) || 'Untitled').slice(0, 95);
+      var privacy = $('ytPrivacy').value;
+      html = '<article class="pv-card pv-yt">' +
+               pvMedia(forced || '16 / 9', src) +
+               '<div class="pv-yt-meta">' +
+                 '<div class="pv-yt-title">' + pvEsc(title) + '</div>' +
+                 '<div class="pv-yt-sub">Your channel · ' + pvEsc(privacy) + ' · ' + pvEsc(stamp) + '</div>' +
+               '</div>' +
+               '<div class="pv-text pv-yt-desc">' + (caption ? pvRich(caption) : '') + '</div>' +
+               '<footer class="pv-actions"><span>Like</span><span>Share</span><span>Save</span></footer>' +
+             '</article>';
+    } else {
+      var cfg = PV[pvActive];
+      var cut = pvCut(caption, cfg.soft);
+      var textHtml = '<div class="pv-text">' + (caption ? pvRich(cut.text) : '') +
+                     (cut.cut ? '<span class="pv-more"> … ' + cfg.more + '</span>' : '') + '</div>';
+      var mediaHtml = pvMedia(forced || cfg.ratio, src);
+      html = '<article class="pv-card">' +
+               '<header class="pv-top">' +
+                 '<span class="pv-avatar" style="background:' + p.color + '">' +
+                   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + p.path + '"/></svg></span>' +
+                 '<span><span class="pv-name">' + cfg.who + '</span>' +
+                 '<span class="pv-time">' + pvEsc(stamp) + '</span></span>' +
+               '</header>' +
+               (cfg.below ? mediaHtml + textHtml : textHtml + mediaHtml) +
+               '<footer class="pv-actions">' +
+                 cfg.acts.map(function(a){ return '<span>' + a + '</span>'; }).join('') +
+               '</footer>' +
+             '</article>';
+    }
+
+    $('pvBody').innerHTML = html;
+
+    /* A dead thumbnail is the same failure the automation would hit, so surface
+       it here rather than letting them find out from a failed row. */
+    var note = $('pvNote');
+    note.textContent = src.kind === 'none'
+      ? (mode === 'upload' ? 'Media appears once you choose a file.' : 'Media appears once the Drive link is valid.')
+      : '';
+    note.classList.remove('warn');
+    if(src.kind === 'drive') pvLoadMedia();
+  }
+
+  $('pvTabs').addEventListener('click', function(e){
+    var tab = e.target.closest('.pv-tab');
+    if(!tab) return;
+    pvActive = tab.getAttribute('data-p');
+    renderPreview();
+  });
+
+  function buildPayload(base64){
+    var url = mode === 'link' ? $('drive').value.trim() : '';
     var when = scheduledDate();
     return {
       driveUrl: url,
-      driveFileId: driveId(url),
+      driveFileId: url ? driveId(url) : null,
+      /* Apps Script writes this to Drive and link-shares it, then the row gets
+         an ordinary Drive URL — the automation never knows the difference. */
+      upload: (mode === 'upload' && upload && base64)
+        ? { name: upload.name, mimeType: upload.mimeType, ratio: canCrop() ? ratioId : 'orig', dataBase64: base64 }
+        : null,
       caption: $('caption').value.trim(),
       platforms: selected(),
       youtube: selected().indexOf('youtube') > -1
@@ -706,19 +1253,32 @@
     var url = $('drive').value.trim();
     var badUrl = !url || url.indexOf('drive.google.com') === -1 || !driveId(url);
 
-    $('drive').classList.remove('inp-invalid');
-    if(badUrl){
-      $('driveErr').textContent = isFolderUrl(url)
-        ? 'That is a folder link — paste the link to a single file inside it.'
-        : 'Enter a valid Google Drive file link.';
-      void $('drive').offsetWidth;               // restart the shake
-      $('drive').classList.add('inp-invalid');
-      $('drive').setAttribute('aria-invalid','true');
-      $('driveErr').classList.add('show');
-      first = first || $('drive');
-    } else {
-      $('drive').removeAttribute('aria-invalid');
+    /* only the active mode is validated — the other pane's field is irrelevant */
+    if(mode === 'upload'){
+      if(!upload || !upload.blob){
+        $('fileErr').textContent = 'Choose a file to upload.';
+        $('fileErr').classList.add('show');
+        first = first || $('drop');
+      } else {
+        $('fileErr').classList.remove('show');
+      }
+      $('drive').classList.remove('inp-invalid');
       $('driveErr').classList.remove('show');
+    } else {
+      $('drive').classList.remove('inp-invalid');
+      if(badUrl){
+        $('driveErr').textContent = isFolderUrl(url)
+          ? 'That is a folder link — paste the link to a single file inside it.'
+          : 'Enter a valid Google Drive file link.';
+        void $('drive').offsetWidth;               // restart the shake
+        $('drive').classList.add('inp-invalid');
+        $('drive').setAttribute('aria-invalid','true');
+        $('driveErr').classList.add('show');
+        first = first || $('drive');
+      } else {
+        $('drive').removeAttribute('aria-invalid');
+        $('driveErr').classList.remove('show');
+      }
     }
 
     /* An over-limit caption can't be published to that network at all — the
@@ -772,7 +1332,12 @@
     this.classList.remove('inp-invalid');
     this.removeAttribute('aria-invalid');
     $('driveErr').classList.remove('show');
+    renderPreview();
   });
+
+  /* the YouTube card shows the exact title and privacy the automation will use */
+  $('ytTitle').addEventListener('input', renderPreview);
+  $('ytPrivacy').addEventListener('change', renderPreview);
 
   /* ---- history ---- */
   function loadHist(){
@@ -857,6 +1422,7 @@
   });
 
   renderHist();
+  setMode('link');   // paints the mode panes and the ratio buttons on first load
 
   /* ---- submit ---- */
   /* Disabling the button isn't enough — Enter inside a text field still fires
@@ -873,20 +1439,27 @@
       return;
     }
 
-    var payload = buildPayload();
     var btn = $('btnSubmit'), txt = btn.querySelector('.txt');
+    var payload;
     sending = true;
     btn.classList.add('loading');
     btn.disabled = true;
-    txt.textContent = 'Saving to sheet...';
+    txt.textContent = mode === 'upload' ? 'Uploading file...' : 'Saving to sheet...';
 
-    /* text/plain keeps this a "simple request" — no OPTIONS preflight,
-       which Apps Script web apps cannot respond to. */
-    fetch(SHEET_ENDPOINT, {
-      method:'POST',
-      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-      body:JSON.stringify(payload)
-    })
+    /* Encoding happens here rather than on file pick, so a ~27 MB base64 string
+       isn't sitting in memory the whole time someone edits their caption. */
+    Promise.resolve(mode === 'upload' && upload ? toBase64(upload.blob) : '')
+      .then(function(b64){
+        payload = buildPayload(b64);
+        txt.textContent = 'Saving to sheet...';
+        /* text/plain keeps this a "simple request" — no OPTIONS preflight,
+           which Apps Script web apps cannot respond to. */
+        return fetch(SHEET_ENDPOINT, {
+          method:'POST',
+          headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+          body:JSON.stringify(payload)
+        });
+      })
       .then(function(r){ return r.json(); })
       .then(function(res){
         if(!res || !res.ok) throw new Error(res && res.error ? res.error : 'The sheet rejected the submission.');
@@ -914,8 +1487,10 @@
         $('ytTitle').value = '';
         $('schedDate').value = '';
         $('schedTime').value = '';
+        clearUpload();          // also revokes the object URL and redraws the preview
         renderCounts();
         renderSched();
+        renderPreview();
       })
       .catch(function(err){
         btn.classList.remove('loading');
