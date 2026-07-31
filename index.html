@@ -481,20 +481,47 @@
   .pv-text{padding:2px 15px 12px;white-space:pre-wrap;word-break:break-word}
   .pv-link{color:#1877F2}
   .pv-more{color:#65676b;cursor:default}
-  .pv-media{
-    position:relative;width:100%;background:#e4e6eb;
-    display:grid;place-items:center;overflow:hidden;
-  }
-  .pv-media img{width:100%;height:100%;object-fit:cover;display:block}
+  .pv-media{position:relative;width:100%;background:#e4e6eb;overflow:hidden}
   .pv-media-msg{
     position:absolute;inset:0;display:none;place-items:center;text-align:center;
     padding:20px;font-size:12.5px;color:#65676b;line-height:1.5;
   }
-  .pv-media.is-empty .pv-media-msg,
-  .pv-media.is-loading .pv-media-msg,
-  .pv-media.is-fail .pv-media-msg{display:grid}
-  .pv-media.is-fail img,
-  .pv-media.is-loading img{display:none}
+  .pv-media.is-empty .pv-media-msg{display:grid}
+
+  /* Facebook, X and LinkedIn collage multiple images into one post; Instagram
+     shows them one at a time. Both layouts are built from the same tiles. */
+  .pv-grid{position:absolute;inset:0;display:grid;gap:2px}
+  .pv-grid.g1{grid-template-columns:1fr}
+  .pv-grid.g2{grid-template-columns:1fr 1fr}
+  .pv-grid.g3{grid-template-columns:2fr 1fr;grid-template-rows:1fr 1fr}
+  .pv-grid.g3 .pv-tile:first-child{grid-row:span 2}
+  .pv-grid.g4{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+  .pv-tile{position:relative;display:block;overflow:hidden;background:#d8dadf}
+  .pv-tile img,.pv-tile video{width:100%;height:100%;object-fit:cover;display:block}
+  .pv-tile.is-loading img,.pv-tile.is-fail img{display:none}
+  .pv-tile-msg{
+    position:absolute;inset:0;display:none;place-items:center;text-align:center;
+    padding:10px;font-size:11.5px;color:#65676b;line-height:1.4;
+  }
+  .pv-tile.is-loading .pv-tile-msg,.pv-tile.is-fail .pv-tile-msg{display:grid}
+  .pv-more-count{
+    position:absolute;inset:0;display:grid;place-items:center;
+    background:rgba(0,0,0,.55);color:#fff;font-size:26px;font-weight:700;
+  }
+
+  .pv-count{
+    position:absolute;top:10px;right:10px;z-index:2;
+    background:rgba(0,0,0,.6);color:#fff;font-size:11.5px;font-weight:650;
+    padding:3px 9px;border-radius:999px;font-variant-numeric:tabular-nums;
+  }
+  .pv-dots{position:absolute;left:0;right:0;bottom:9px;z-index:2;display:flex;justify-content:center;gap:5px}
+  /* deliberately NOT .pv-dot — that class is the platform tab's colour dot */
+  .pv-cdot{
+    width:7px;height:7px;border-radius:50%;border:0;padding:0;cursor:pointer;
+    background:rgba(255,255,255,.55);box-shadow:0 1px 3px rgba(0,0,0,.45);
+    transition:background var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
+  }
+  .pv-cdot.on{background:#fff;transform:scale(1.25)}
   .pv-actions{
     display:flex;gap:18px;padding:10px 15px;border-top:1px solid #e4e6eb;
     font-size:12.5px;font-weight:600;color:#65676b;
@@ -1228,10 +1255,10 @@
      character caps (those live in PLATFORMS and are enforced on submit).
      ------------------------------------------------------------------ */
   var PV = {
-    facebook: { soft:477, ratio:'16 / 9', below:false, more:'See more',   who:'Your Page',   acts:['Like','Comment','Share'] },
-    instagram:{ soft:125, ratio:'1 / 1',  below:true,  more:'more',       who:'yourhandle',  acts:['Like','Comment','Send'] },
-    twitter:  { soft:280, ratio:'16 / 9', below:false, more:'Show more',  who:'@yourhandle', acts:['Reply','Repost','Like'] },
-    linkedin: { soft:210, ratio:'16 / 9', below:false, more:'see more',   who:'Your Page',   acts:['Like','Comment','Repost','Send'] }
+    facebook: { soft:477, ratio:'16 / 9', below:false, more:'See more',   who:'Your Page',   acts:['Like','Comment','Share'] , layout:'grid' },
+    instagram:{ soft:125, ratio:'1 / 1',  below:true,  more:'more',       who:'yourhandle',  acts:['Like','Comment','Send'] , layout:'carousel' },
+    twitter:  { soft:280, ratio:'16 / 9', below:false, more:'Show more',  who:'@yourhandle', acts:['Reply','Repost','Like'] , layout:'grid' },
+    linkedin: { soft:210, ratio:'16 / 9', below:false, more:'see more',   who:'Your Page',   acts:['Like','Comment','Repost','Send'] , layout:'grid' }
   };
   var pvActive = null;
 
@@ -1257,7 +1284,25 @@
      pvLoadMedia() — setting it inside innerHTML means the browser can finish
      (or fail) the request before any listener is attached, which silently
      leaves a blank box. Local uploads have no such race. */
-  function pvMedia(ratio){
+  /* One cell of the layout. Local uploads have their src already; Drive links
+     get theirs from pvLoadMedia once listeners are attached. */
+  function pvTile(m, overlay){
+    var extra = overlay || '';
+    if(m.kind === 'file'){
+      var inner = m.isVideo
+        ? '<video src="' + pvEsc(m.objectUrl) + '" muted playsinline preload="metadata"></video>'
+        : '<img alt="" src="' + pvEsc(m.objectUrl) + '" />';
+      return '<span class="pv-tile">' + inner + extra + '</span>';
+    }
+    return '<span class="pv-tile is-loading" data-id="' + pvEsc(m.fileId) + '">' +
+             '<img alt="" referrerpolicy="no-referrer" />' +
+             '<span class="pv-tile-msg">Loading…</span>' + extra +
+           '</span>';
+  }
+
+  /* layout: 'grid' collages several images into one post the way Facebook, X
+     and LinkedIn do; 'carousel' shows one at a time with dots, like Instagram. */
+  function pvMedia(ratio, layout){
     if(!media.length){
       return '<div class="pv-media is-empty" style="aspect-ratio:' + ratio + '">' +
                '<span class="pv-media-msg">' +
@@ -1265,63 +1310,66 @@
                '</span></div>';
     }
     if(pvSlide >= media.length) pvSlide = 0;
-    var m = media[pvSlide];
 
-    /* Real carousels show position and dots, so the preview does too. */
-    var chrome = media.length > 1
-      ? '<span class="pv-count">' + (pvSlide + 1) + '/' + media.length + '</span>' +
+    var body;
+    if(media.length === 1){
+      body = '<span class="pv-grid g1">' + pvTile(media[0]) + '</span>';
+    } else if(layout === 'grid'){
+      var shown = media.slice(0, 4);
+      var extra = media.length - shown.length;
+      body = '<span class="pv-grid g' + shown.length + '">' +
+        shown.map(function(m, i){
+          /* the last tile carries a +N badge, exactly as Facebook does */
+          var ov = (extra > 0 && i === shown.length - 1)
+            ? '<span class="pv-more-count">+' + extra + '</span>' : '';
+          return pvTile(m, ov);
+        }).join('') + '</span>';
+    } else {
+      body = '<span class="pv-grid g1">' + pvTile(media[pvSlide]) + '</span>' +
+        '<span class="pv-count">' + (pvSlide + 1) + '/' + media.length + '</span>' +
         '<span class="pv-dots">' + media.map(function(_, i){
-          return '<button type="button" class="pv-dot' + (i === pvSlide ? ' on' : '') +
+          return '<button type="button" class="pv-cdot' + (i === pvSlide ? ' on' : '') +
                  '" data-slide="' + i + '" aria-label="Item ' + (i + 1) + '"></button>';
-        }).join('') + '</span>'
-      : '';
-
-    if(m.kind === 'file'){
-      var inner = m.isVideo
-        ? '<video src="' + pvEsc(m.objectUrl) + '" muted playsinline controls preload="metadata"></video>'
-        : '<img alt="" src="' + pvEsc(m.objectUrl) + '" />';
-      return '<div class="pv-media" style="aspect-ratio:' + ratio + '">' + inner + chrome +
-               '<span class="pv-media-msg"></span></div>';
+        }).join('') + '</span>';
     }
-    return '<div class="pv-media is-loading" style="aspect-ratio:' + ratio + '" data-id="' + pvEsc(m.fileId) + '">' +
-             '<img alt="" referrerpolicy="no-referrer" />' + chrome +
-             '<span class="pv-media-msg">Loading preview…</span>' +
-           '</div>';
+
+    return '<div class="pv-media" style="aspect-ratio:' + ratio + '">' + body +
+             '<span class="pv-media-msg"></span></div>';
   }
 
   /* Drive serves thumbnails from two different hosts and either can refuse
      depending on the file. Try both before calling it a failure. */
   function pvLoadMedia(){
-    var box = $('pvBody').querySelector('.pv-media[data-id]');
-    if(!box) return;
-
-    var id   = box.getAttribute('data-id');
-    var img  = box.querySelector('img');
-    var msg  = box.querySelector('.pv-media-msg');
+    var tiles = $('pvBody').querySelectorAll('.pv-tile[data-id]');
+    if(!tiles.length) return;
     var note = $('pvNote');
-    var srcs = [
-      'https://drive.google.com/thumbnail?id=' + id + '&sz=w800',
-      'https://lh3.googleusercontent.com/d/' + id + '=w800'
-    ];
-    var i = 0;
 
-    img.addEventListener('load', function(){
-      if(!img.naturalWidth) return;               // some hosts 200 with an empty body
-      box.classList.remove('is-loading', 'is-fail');
-      note.textContent = '';
-      note.classList.remove('warn');
+    [].forEach.call(tiles, function(box){
+      var id   = box.getAttribute('data-id');
+      var img  = box.querySelector('img');
+      var msg  = box.querySelector('.pv-tile-msg');
+      var srcs = [
+        'https://drive.google.com/thumbnail?id=' + id + '&sz=w800',
+        'https://lh3.googleusercontent.com/d/' + id + '=w800'
+      ];
+      var i = 0;
+
+      img.addEventListener('load', function(){
+        if(!img.naturalWidth) return;             // some hosts 200 with an empty body
+        box.classList.remove('is-loading', 'is-fail');
+      });
+
+      img.addEventListener('error', function(){
+        if(i < srcs.length){ img.src = srcs[i++]; return; }   // try the other host
+        box.classList.remove('is-loading');
+        box.classList.add('is-fail');
+        msg.textContent = 'Could not load.';
+        note.textContent = 'Some media could not be fetched. Check the links point at real files shared "Anyone with the link" — the automation fetches them the same way.';
+        note.classList.add('warn');
+      });
+
+      img.src = srcs[i++];                        // listeners are attached first
     });
-
-    img.addEventListener('error', function(){
-      if(i < srcs.length){ img.src = srcs[i++]; return; }   // try the other host
-      box.classList.remove('is-loading');
-      box.classList.add('is-fail');
-      msg.innerHTML = 'Couldn\'t load the media.';
-      note.textContent = 'The preview couldn\'t fetch this file. Check the link points at a real file and that sharing is set to "Anyone with the link" — the automation fetches it the same way.';
-      note.classList.add('warn');
-    });
-
-    img.src = srcs[i++];                           // listeners are attached first
   }
 
   function renderPreview(){
@@ -1359,7 +1407,7 @@
       var title = ((($('ytTitle').value || caption).replace(/\s+/g, ' ').trim()) || 'Untitled').slice(0, 95);
       var privacy = $('ytPrivacy').value;
       html = '<article class="pv-card pv-yt">' +
-               pvMedia(forced || '16 / 9') +
+               pvMedia(forced || '16 / 9', 'single') +
                '<div class="pv-yt-meta">' +
                  '<div class="pv-yt-title">' + pvEsc(title) + '</div>' +
                  '<div class="pv-yt-sub">Your channel · ' + pvEsc(privacy) + ' · ' + pvEsc(stamp) + '</div>' +
@@ -1372,7 +1420,7 @@
       var cut = pvCut(caption, cfg.soft);
       var textHtml = '<div class="pv-text">' + (caption ? pvRich(cut.text) : '') +
                      (cut.cut ? '<span class="pv-more"> … ' + cfg.more + '</span>' : '') + '</div>';
-      var mediaHtml = pvMedia(forced || cfg.ratio);
+      var mediaHtml = pvMedia(forced || cfg.ratio, cfg.layout);
       html = '<article class="pv-card">' +
                '<header class="pv-top">' +
                  '<span class="pv-avatar" style="background:' + p.color + '">' +
@@ -1398,7 +1446,7 @@
   }
 
   $('pvBody').addEventListener('click', function(e){
-    var d = e.target.closest('.pv-dot');
+    var d = e.target.closest('.pv-cdot');
     if(!d) return;
     pvSlide = +d.getAttribute('data-slide');
     renderPreview();
