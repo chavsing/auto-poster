@@ -109,6 +109,8 @@
   }
   .ghost:hover{border-color:var(--stroke-2);color:var(--text);background:var(--surface-2)}
   .ghost:active{transform:scale(.97)}
+  .ghost{text-decoration:none}
+  .ghost svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 
   /* ---------- hero ---------- */
   .hero{text-align:center;margin-bottom:36px}
@@ -576,6 +578,10 @@
       <span class="mark"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>
       AutoPost
     </div>
+    <a class="ghost" href="./review.html">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      Review queue
+    </a>
   </header>
 
   <div class="hero">
@@ -695,7 +701,7 @@
     <div id="histList"></div>
   </section>
 
-  <p class="foot">Submissions are appended to your <a id="sheetLink" href="#" target="_blank" rel="noopener">Google Sheet</a>.</p>
+  <p class="foot">Submissions are appended to your <a id="sheetLink" href="#" target="_blank" rel="noopener">Google Sheet</a> and wait in the <a href="./review.html">review queue</a> until approved.</p>
 </div>
 
 <div class="toast" id="toast" role="status" aria-live="polite">

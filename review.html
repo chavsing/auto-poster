@@ -1,0 +1,1155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>AutoPost — Review queue</title>
+<style>
+  :root{
+    --bg:#08090f;
+    --surface:rgba(255,255,255,.045);
+    --surface-2:rgba(255,255,255,.07);
+    --stroke:rgba(255,255,255,.09);
+    --stroke-2:rgba(255,255,255,.17);
+    --text:#eef1f8;
+    --muted:#98a1b6;
+    --brand:#6d5efc;
+    --brand-2:#22d3ee;
+    --brand-3:#b06cf7;
+    --ok:#2ecc8f;
+    --err:#ff5f70;
+    --t-fast:140ms;
+    --t:220ms;
+    --ease-out:cubic-bezier(.16,1,.3,1);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--text);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;min-height:100dvh;
+  }
+  body.locked{overflow:hidden}
+
+  /* ---------- ambient background (decorative) ---------- */
+  .bg{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+  .bg .blob{position:absolute;border-radius:50%;filter:blur(80px);opacity:.42;will-change:transform}
+  .bg .b1{width:600px;height:600px;top:-240px;left:-160px;background:radial-gradient(circle at 30% 30%,#6d5efc,transparent 68%);animation:drift1 26s var(--ease-out) infinite alternate}
+  .bg .b2{width:520px;height:520px;top:-140px;right:-180px;background:radial-gradient(circle at 60% 40%,#22d3ee,transparent 66%);opacity:.3;animation:drift2 31s var(--ease-out) infinite alternate}
+  @keyframes drift1{to{transform:translate3d(140px,90px,0) scale(1.18)}}
+  @keyframes drift2{to{transform:translate3d(-120px,140px,0) scale(1.12)}}
+  .bg .grid{
+    position:absolute;inset:0;
+    background-image:linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
+    background-size:56px 56px;
+    -webkit-mask-image:radial-gradient(ellipse 85% 62% at 50% 10%,#000 20%,transparent 78%);
+    mask-image:radial-gradient(ellipse 85% 62% at 50% 10%,#000 20%,transparent 78%);
+  }
+  .bg .vig{position:absolute;inset:0;background:radial-gradient(ellipse 78% 60% at 50% 0%,transparent 40%,rgba(4,5,10,.72) 100%)}
+
+  .wrap{max-width:1000px;margin:0 auto;padding:26px 20px 96px;position:relative}
+  .rv{opacity:0;transform:translateY(14px);animation:rise .5s var(--ease-out) forwards;animation-delay:var(--d,0ms)}
+  @keyframes rise{to{opacity:1;transform:none}}
+
+  /* ---------- header ---------- */
+  .top{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:30px;flex-wrap:wrap}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:-.02em;font-size:15px;text-decoration:none;color:var(--text)}
+  .logo .mark{
+    width:34px;height:34px;border-radius:10px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--brand),var(--brand-2));
+    box-shadow:0 6px 22px rgba(109,94,252,.5);
+  }
+  .logo svg{width:18px;height:18px}
+  .topacts{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ghost{
+    background:var(--surface);border:1px solid var(--stroke);color:var(--muted);
+    padding:9px 14px;min-height:40px;border-radius:11px;font:inherit;font-size:13px;font-weight:600;
+    cursor:pointer;display:inline-flex;align-items:center;gap:7px;text-decoration:none;
+    transition:color var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
+  }
+  .ghost:hover{border-color:var(--stroke-2);color:var(--text);background:var(--surface-2)}
+  .ghost:active{transform:scale(.97)}
+  .ghost svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .ghost[hidden]{display:none}
+
+  /* ---------- page heading ---------- */
+  .hd{margin-bottom:24px}
+  .hd h1{font-size:clamp(26px,4vw,36px);line-height:1.1;letter-spacing:-.03em;margin:0 0 8px;font-weight:800}
+  .hd .grad{background:linear-gradient(100deg,var(--brand-2),var(--brand),var(--brand-3));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .hd p{color:var(--muted);font-size:14.5px;margin:0;max-width:62ch}
+
+  .card{
+    background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.022));
+    border:1px solid var(--stroke);border-radius:20px;padding:22px;
+    box-shadow:0 24px 70px rgba(0,0,0,.45);
+  }
+
+  /* ---------- lock gate ---------- */
+  .gate{max-width:460px}
+  .gate h2{font-size:16px;margin:0 0 8px;font-weight:700}
+  .gate p{color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 16px}
+  .gate code{background:rgba(255,255,255,.08);border:1px solid var(--stroke);padding:1px 6px;border-radius:6px;font-size:12px}
+  .keyrow{display:flex;gap:8px}
+  input,textarea,select{
+    width:100%;background:rgba(255,255,255,.035);border:1px solid var(--stroke);
+    border-radius:12px;padding:12px 14px;color:var(--text);font:inherit;font-size:14px;
+    min-height:46px;transition:border-color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out),box-shadow var(--t-fast) var(--ease-out);
+  }
+  input:focus,textarea:focus,select:focus{
+    outline:none;border-color:rgba(109,94,252,.65);background:rgba(255,255,255,.06);
+    box-shadow:0 0 0 4px rgba(109,94,252,.16);
+  }
+  input::placeholder,textarea::placeholder{color:#666f85}
+  .btn{
+    flex:0 0 auto;padding:0 18px;min-height:46px;border-radius:12px;cursor:pointer;
+    font:inherit;font-size:13.5px;font-weight:700;border:1px solid transparent;
+    background:linear-gradient(100deg,var(--brand),var(--brand-3));color:#fff;
+    display:inline-flex;align-items:center;justify-content:center;gap:7px;
+    transition:filter var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out),opacity var(--t-fast) var(--ease-out);
+  }
+  .btn:hover{filter:brightness(1.12)}
+  .btn:active{transform:scale(.97)}
+  .btn:disabled{opacity:.42;cursor:not-allowed;filter:none;transform:none}
+  .btn.flat{background:rgba(255,255,255,.08);border-color:var(--stroke-2);color:var(--text)}
+  .btn.flat:hover{background:rgba(255,255,255,.15);filter:none}
+  /* inline-flex outranks the UA sheet's [hidden]{display:none} — say it again */
+  .btn[hidden]{display:none}
+  .err-msg{color:var(--err);font-size:12.5px;margin:10px 0 0;display:none}
+  .err-msg.show{display:block}
+
+  /* ---------- toolbar ---------- */
+  .bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+  .filters{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{
+    background:var(--surface);border:1px solid var(--stroke);color:var(--muted);
+    padding:8px 13px;min-height:38px;border-radius:999px;font:inherit;font-size:12.5px;font-weight:650;cursor:pointer;
+    display:inline-flex;align-items:center;gap:7px;
+    transition:color var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  .chip:hover{color:var(--text);border-color:var(--stroke-2)}
+  .chip.on{color:var(--text);background:rgba(109,94,252,.16);border-color:rgba(109,94,252,.46)}
+  .chip .n{font-variant-numeric:tabular-nums;opacity:.72;font-size:11.5px}
+  .chip[hidden]{display:none}
+
+  /* ---------- queue rows ---------- */
+  .rowcard{
+    display:flex;align-items:center;gap:13px;width:100%;text-align:left;
+    padding:11px 13px;margin-bottom:9px;cursor:pointer;
+    border:1px solid var(--stroke);border-radius:15px;background:rgba(255,255,255,.025);
+    color:inherit;font:inherit;
+    animation:rise .42s var(--ease-out) backwards;animation-delay:var(--d,0ms);
+    transition:border-color var(--t) var(--ease-out),background var(--t) var(--ease-out),transform var(--t) var(--ease-out),opacity var(--t) var(--ease-out);
+  }
+  .rowcard:hover{border-color:var(--stroke-2);background:rgba(255,255,255,.05);transform:translateY(-1px)}
+  .rowcard:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+  .rowcard.busy{opacity:.45;pointer-events:none}
+
+  .rthumb{
+    flex:0 0 auto;width:54px;height:54px;border-radius:11px;overflow:hidden;position:relative;
+    background:rgba(255,255,255,.05);border:1px solid var(--stroke);display:grid;place-items:center;
+  }
+  .rthumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .rthumb .ph{color:#5b6379;font-size:10px;font-weight:700;letter-spacing:.05em}
+  .rthumb .more{
+    position:absolute;right:3px;bottom:3px;background:rgba(6,7,12,.82);color:#fff;
+    font-size:10px;font-weight:700;padding:2px 5px;border-radius:6px;line-height:1;
+  }
+  .rbody{flex:1;min-width:0}
+  .rcap{font-size:14px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:5px}
+  .rcap.none{color:var(--muted);font-style:italic;font-weight:400}
+  .rmeta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:11.5px;color:var(--muted)}
+  .rmeta .sep{opacity:.4}
+
+  /* platform chips — icon AND name, so the target is readable at a glance */
+  .plats{display:flex;gap:5px;flex-wrap:wrap}
+  .pchip{
+    display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:650;
+    padding:3px 8px 3px 4px;border-radius:999px;
+    background:rgba(255,255,255,.06);border:1px solid var(--stroke);color:#d6dbe8;
+  }
+  .pchip .sw{width:15px;height:15px;border-radius:5px;display:grid;place-items:center;flex:0 0 auto}
+  .pchip .sw svg{width:9px;height:9px;fill:#fff}
+  .plats.none{font-size:11px;color:var(--err);opacity:.85}
+
+  .badge{
+    font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+    padding:3px 8px;border-radius:999px;border:1px solid var(--stroke-2);color:var(--muted);
+    flex:0 0 auto;white-space:nowrap;
+  }
+  .badge.hold{background:rgba(255,255,255,.06)}
+  .badge.live{background:rgba(46,204,143,.14);border-color:rgba(46,204,143,.4);color:#7ee2b8}
+  .badge.done{background:rgba(109,94,252,.14);border-color:rgba(109,94,252,.4);color:#c3bcff}
+  .badge.bad{background:rgba(255,95,112,.14);border-color:rgba(255,95,112,.42);color:#ffa3ad}
+
+  .quick{
+    flex:0 0 auto;padding:9px 15px;min-height:38px;border-radius:10px;cursor:pointer;
+    font:inherit;font-size:12.5px;font-weight:650;border:1px solid var(--stroke-2);
+    background:rgba(255,255,255,.08);color:var(--text);
+    transition:background var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
+  }
+  .quick:hover{background:rgba(255,255,255,.17)}
+  .quick:active{transform:scale(.96)}
+  .quick.go{background:linear-gradient(100deg,var(--brand),var(--brand-3));border-color:transparent;color:#fff}
+  .quick.go:hover{filter:brightness(1.12)}
+
+  .empty{color:var(--muted);font-size:13.5px;padding:34px 4px;text-align:center}
+  .empty strong{display:block;color:var(--text);font-size:15px;margin-bottom:6px;font-weight:650}
+
+  /* ---------- detail drawer ---------- */
+  .scrim{
+    position:fixed;inset:0;background:rgba(4,5,10,.66);backdrop-filter:blur(3px);z-index:40;
+    opacity:0;transition:opacity var(--t) var(--ease-out);
+  }
+  .scrim.in{opacity:1}
+  .drawer{
+    position:fixed;top:0;right:0;bottom:0;width:min(560px,100%);z-index:50;
+    background:#0c0e17;border-left:1px solid var(--stroke);
+    display:flex;flex-direction:column;
+    transform:translateX(100%);transition:transform var(--t) var(--ease-out);
+    box-shadow:-30px 0 80px rgba(0,0,0,.55);
+  }
+  .drawer.in{transform:none}
+  .dhead{
+    display:flex;align-items:center;gap:10px;padding:16px 18px;
+    border-bottom:1px solid var(--stroke);flex:0 0 auto;
+  }
+  .dhead h2{font-size:14.5px;margin:0;font-weight:700;flex:1;min-width:0}
+  .dhead .sub{display:block;font-size:11.5px;color:var(--muted);font-weight:500;margin-top:2px}
+  .x{
+    width:38px;height:38px;flex:0 0 auto;display:grid;place-items:center;border-radius:10px;
+    background:none;border:1px solid var(--stroke);color:var(--muted);cursor:pointer;
+    transition:color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  .x:hover{color:var(--text);background:var(--surface-2)}
+  .x svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+  .dbody{flex:1;overflow-y:auto;padding:18px;-webkit-overflow-scrolling:touch}
+  .dfoot{
+    flex:0 0 auto;display:flex;gap:9px;padding:14px 18px;
+    border-top:1px solid var(--stroke);background:rgba(255,255,255,.02);
+  }
+  .dfoot .btn{flex:1}
+  .dfoot[hidden]{display:none}
+
+  .fld{margin-bottom:22px}
+  .fld:last-child{margin-bottom:4px}
+  .lab{
+    display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+    font-size:11.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--muted);margin-bottom:9px;
+  }
+  .lab .hint{text-transform:none;letter-spacing:0;font-weight:500;font-size:11.5px}
+  .lab .hint.over{color:var(--err)}
+  textarea{resize:vertical;min-height:130px;line-height:1.6}
+
+  /* stage: the big view of the selected item */
+  .stage{
+    position:relative;width:100%;aspect-ratio:4/3;border-radius:14px;overflow:hidden;
+    background:rgba(255,255,255,.04);border:1px solid var(--stroke);display:grid;place-items:center;
+  }
+  .stage img,.stage video{width:100%;height:100%;object-fit:contain;display:block;background:#05060b}
+  .stage .msg{position:absolute;color:var(--muted);font-size:12.5px;padding:0 20px;text-align:center}
+  .stage .idx{
+    position:absolute;top:8px;right:8px;background:rgba(6,7,12,.8);color:#fff;
+    font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;
+  }
+  .strip{display:flex;gap:7px;overflow-x:auto;padding:9px 1px 3px;scrollbar-width:thin}
+  .tile{
+    position:relative;flex:0 0 auto;width:62px;height:62px;border-radius:10px;overflow:hidden;
+    border:2px solid transparent;background:rgba(255,255,255,.05);display:block;
+    transition:border-color var(--t-fast) var(--ease-out)}
+  .tile .pick{
+    display:block;width:100%;height:100%;padding:0;border:0;background:none;cursor:pointer;
+    color:var(--muted);font:inherit}
+  .tile .pick:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+  .tile img,.tile video{width:100%;height:100%;object-fit:cover;display:block}
+  .tile.on{border-color:var(--brand)}
+  .tile .n{
+    position:absolute;left:3px;top:3px;background:rgba(6,7,12,.8);color:#fff;
+    font-size:9.5px;font-weight:700;padding:1px 5px;border-radius:5px;line-height:1.4;
+  }
+  .tile .kill{
+    position:absolute;right:2px;top:2px;width:19px;height:19px;border-radius:6px;border:0;padding:0;
+    background:rgba(6,7,12,.82);color:#fff;cursor:pointer;display:grid;place-items:center;
+  }
+  .tile .kill svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round}
+  .tile .kill:hover{background:var(--err)}
+  .tile.add{border:1px dashed var(--stroke-2);display:grid;place-items:center;color:var(--muted);cursor:pointer;padding:0}
+  .tile.add:hover{color:var(--text);border-color:var(--brand)}
+  .tile.add svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+
+  .order{display:flex;gap:7px;margin-top:9px}
+  .mini{
+    background:var(--surface);border:1px solid var(--stroke);color:var(--muted);
+    padding:7px 11px;min-height:34px;border-radius:9px;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer;
+    display:inline-flex;align-items:center;gap:5px;
+    transition:color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out)}
+  .mini:hover:not(:disabled){color:var(--text);background:var(--surface-2)}
+  .mini:disabled{opacity:.35;cursor:not-allowed}
+  .mini svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+
+  .addrow{display:flex;gap:8px;margin-top:11px}
+  .addrow input{min-height:42px;font-size:13px}
+  .addrow .mini{min-height:42px;padding:0 14px;flex:0 0 auto}
+
+  /* platform toggles */
+  .ptoggles{display:flex;gap:7px;flex-wrap:wrap}
+  .ptog{
+    display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+    padding:9px 14px 9px 10px;border-radius:12px;font-size:13px;font-weight:600;
+    background:rgba(255,255,255,.035);border:1px solid var(--stroke);color:var(--muted);
+    transition:color var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  .ptog input{position:absolute;opacity:0;width:0;height:0;min-height:0}
+  .ptog .sw{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;flex:0 0 auto;opacity:.5;transition:opacity var(--t-fast) var(--ease-out)}
+  .ptog .sw svg{width:12px;height:12px;fill:#fff}
+  .ptog:hover{color:var(--text);border-color:var(--stroke-2)}
+  .ptog.on{color:var(--text);background:rgba(109,94,252,.14);border-color:rgba(109,94,252,.45)}
+  .ptog.on .sw{opacity:1}
+  .ptog input:focus-visible + .sw{outline:2px solid var(--brand);outline-offset:2px}
+
+  .when{display:grid;grid-template-columns:1.35fr 1fr;gap:9px}
+  .when input{cursor:pointer}
+  .when input::-webkit-calendar-picker-indicator{filter:invert(1) brightness(1.6);opacity:.6;cursor:pointer}
+  .note{font-size:12px;color:var(--muted);margin:9px 0 0}
+  .note b{color:var(--text);font-weight:650}
+  .note.warn{color:#ffca7a}
+
+  /* ---------- toast ---------- */
+  .toast{
+    position:fixed;left:50%;bottom:26px;transform:translate(-50%,26px);
+    background:rgba(18,20,30,.97);border:1px solid var(--stroke-2);color:var(--text);
+    padding:13px 18px;border-radius:14px;font-size:13.5px;font-weight:550;
+    box-shadow:0 18px 50px rgba(0,0,0,.6);opacity:0;pointer-events:none;z-index:80;
+    display:flex;align-items:center;gap:10px;max-width:min(92vw,460px);
+    transition:opacity var(--t) var(--ease-out),transform var(--t) var(--ease-out);
+  }
+  .toast.show{opacity:1;transform:translate(-50%,0)}
+  .toast .ic{width:9px;height:9px;border-radius:50%;background:var(--ok);flex:0 0 auto}
+  .toast.bad .ic{background:var(--err)}
+
+  .foot{text-align:center;color:#5b6379;font-size:12px;margin-top:44px}
+
+  @media (max-width:640px){
+    .wrap{padding:20px 15px 90px}
+    .drawer{width:100%;top:auto;height:92dvh;border-left:0;border-top:1px solid var(--stroke);border-radius:22px 22px 0 0;transform:translateY(100%)}
+    .drawer.in{transform:none}
+    .rowcard{align-items:flex-start;flex-wrap:wrap}
+    .quick{width:100%;margin-top:4px}
+    .when{grid-template-columns:1fr}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+    .rv,.rowcard{opacity:1!important;transform:none!important}
+    .bg .blob{animation:none!important}
+  }
+</style>
+</head>
+<body>
+
+<div class="bg" aria-hidden="true">
+  <span class="blob b1"></span>
+  <span class="blob b2"></span>
+  <span class="grid"></span>
+  <span class="vig"></span>
+</div>
+
+<div class="wrap">
+
+  <header class="top rv" style="--d:0ms">
+    <a class="logo" href="./index.html">
+      <span class="mark"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>
+      AutoPost
+    </a>
+    <div class="topacts">
+      <a class="ghost" href="./index.html">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12,19 5,12 12,5"/></svg>
+        New post
+      </a>
+      <a class="ghost" id="sheetLink" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        Sheet
+      </a>
+      <button class="ghost" type="button" id="lockBtn" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+        Lock
+      </button>
+    </div>
+  </header>
+
+  <div class="hd rv" style="--d:60ms">
+    <h1>Review <span class="grad">queue</span></h1>
+    <p id="hdSub">Check what is about to go out, fix anything that needs fixing, then approve. Only approved posts are picked up by the automation.</p>
+  </div>
+
+  <!-- locked state -->
+  <section class="card gate rv" id="gate" style="--d:120ms">
+    <h2>Approval key required</h2>
+    <p>Approving publishes to your live accounts, so this page asks for a key that is never stored in it. Run <code>newApprovalKey()</code> once in the Apps Script editor and paste the result here.</p>
+    <div class="keyrow">
+      <input type="password" id="key" autocomplete="current-password" placeholder="Approval key" aria-label="Approval key" />
+      <button class="btn" type="button" id="unlock">Unlock</button>
+    </div>
+    <p class="err-msg" id="gateErr" role="alert"></p>
+  </section>
+
+  <!-- unlocked -->
+  <section id="queue" hidden>
+    <div class="bar">
+      <div class="filters" id="filters" role="tablist" aria-label="Filter the queue"></div>
+      <button class="ghost" type="button" id="refresh">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="23,4 23,10 17,10"/><path d="M20.5 15a9 9 0 1 1-2.1-9.4L23 10"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div id="list" aria-live="polite"></div>
+  </section>
+
+  <p class="foot">Rows the automation has already handled are read-only — editing them would change the sheet without changing the post.</p>
+</div>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<aside class="drawer" id="drawer" hidden role="dialog" aria-modal="true" aria-labelledby="dTitle" tabindex="-1">
+  <div class="dhead">
+    <h2 id="dTitle">Post<span class="sub" id="dSub"></span></h2>
+    <span class="badge" id="dBadge"></span>
+    <button class="x" type="button" id="dClose" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
+  </div>
+  <div class="dbody" id="dBody"></div>
+  <div class="dfoot" id="dFoot">
+    <button class="btn flat" type="button" id="dSave" disabled>Save changes</button>
+    <button class="btn" type="button" id="dApprove">Approve</button>
+  </div>
+</aside>
+
+<div class="toast" id="toast" role="status" aria-live="polite"><span class="ic"></span><span id="toastMsg"></span></div>
+
+<input type="file" id="picker" accept="image/*,video/*" multiple hidden />
+
+<script>
+(function(){
+  /* ===== CONFIG — must match index.html and AppsScript.gs ============ */
+  var SHEET_ENDPOINT = 'https://script.google.com/macros/s/AKfycbx2HSGFzDsPfQ8r4nWArkTvF2MOv4glDg_-7Z0AEcSxgkkhDFmNnWGnaZFEVqPD93jCsQ/exec';
+  var AUTH_TOKEN     = 'ap_5iLo88aF_oQ0NG-hh1JKxDUi';
+  var SHEET_URL      = 'https://docs.google.com/spreadsheets/d/1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k/edit';
+  /* ================================================================== */
+
+  var PLATFORMS = [
+    { id:'facebook', name:'Facebook',   limit:63206, color:'#1877F2', path:'M22 12a10 10 0 1 0-11.6 9.9v-7h-2.5V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.4h-1.2c-1.2 0-1.6.8-1.6 1.6V12h2.7l-.4 2.9h-2.3v7A10 10 0 0 0 22 12z' },
+    { id:'instagram',name:'Instagram',  limit:2200,  color:'#E1306C', path:'M12 2.2c3.2 0 3.6 0 4.9.1 1.2.1 1.8.2 2.2.4.6.2 1 .5 1.4 1 .5.4.8.8 1 1.4.2.4.3 1 .4 2.2.1 1.3.1 1.7.1 4.9s0 3.6-.1 4.9c-.1 1.2-.2 1.8-.4 2.2-.2.6-.5 1-1 1.4-.4.5-.8.8-1.4 1-.4.2-1 .3-2.2.4-1.3.1-1.7.1-4.9.1s-3.6 0-4.9-.1c-1.2-.1-1.8-.2-2.2-.4-.6-.2-1-.5-1.4-1-.5-.4-.8-.8-1-1.4-.2-.4-.3-1-.4-2.2C2.2 15.6 2.2 15.2 2.2 12s0-3.6.1-4.9c.1-1.2.2-1.8.4-2.2.2-.6.5-1 1-1.4.4-.5.8-.8 1.4-1 .4-.2 1-.3 2.2-.4C8.4 2.2 8.8 2.2 12 2.2zm0 3.4A6.4 6.4 0 1 0 18.4 12 6.4 6.4 0 0 0 12 5.6zm0 10.6A4.2 4.2 0 1 1 16.2 12 4.2 4.2 0 0 1 12 16.2zm6.6-10.9a1.5 1.5 0 1 1-1.5-1.5 1.5 1.5 0 0 1 1.5 1.5z' },
+    { id:'twitter',  name:'X / Twitter',limit:280,   color:'#000000', path:'M17.5 3h3.2l-7 8 8.2 10h-6.4l-5-6.1L4.8 21H1.6l7.5-8.6L1.2 3h6.6l4.5 5.6L17.5 3zm-1.1 16.1h1.8L7.7 4.8H5.8l10.6 14.3z' },
+    { id:'linkedin', name:'LinkedIn',   limit:3000,  color:'#0A66C2', path:'M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM3 9h4v12H3V9zm7 0h3.8v1.7h.1c.5-1 1.8-2 3.7-2 4 0 4.7 2.6 4.7 6V21h-4v-5.6c0-1.3 0-3-1.9-3s-2.2 1.4-2.2 2.9V21h-4V9z' },
+    { id:'youtube',  name:'YouTube',    limit:5000,  color:'#FF0000', path:'M23 12s0-3.5-.4-5.2a2.9 2.9 0 0 0-2-2C18.7 4.3 12 4.3 12 4.3s-6.7 0-8.6.5a2.9 2.9 0 0 0-2 2C1 8.5 1 12 1 12s0 3.5.4 5.2c.2 1 1 1.7 2 2 1.9.5 8.6.5 8.6.5s6.7 0 8.6-.5a2.9 2.9 0 0 0 2-2C23 15.5 23 12 23 12zM9.8 15.4V8.6l5.8 3.4-5.8 3.4z' }
+  ];
+  var MEDIA_LIMITS = { facebook:30, instagram:10, twitter:4, linkedin:10, youtube:1 };
+  var MAX_MEDIA = 10;
+  var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+  var $ = function(id){ return document.getElementById(id); };
+  function meta(id){ return PLATFORMS.filter(function(p){ return p.id === id; })[0]; }
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  $('sheetLink').href = SHEET_URL;
+
+  /* ---- the key ------------------------------------------------------
+     sessionStorage, never localStorage: it dies with the tab, so a shared
+     or unattended machine does not keep publish rights lying around.
+     ------------------------------------------------------------------ */
+  var AP_KEY = 'ap_approval_key';
+  function apKey(){ try { return sessionStorage.getItem(AP_KEY) || ''; } catch(e){ return ''; } }
+  function setKey(v){ try { v ? sessionStorage.setItem(AP_KEY, v) : sessionStorage.removeItem(AP_KEY); } catch(e){} }
+
+  /* text/plain keeps this a "simple request" — an Apps Script web app cannot
+     answer a CORS preflight, so any other content type fails outright. */
+  function call(payload){
+    return fetch(SHEET_ENDPOINT, {
+      method:'POST',
+      headers:{ 'Content-Type':'text/plain;charset=utf-8' },
+      body:JSON.stringify(Object.assign({ token: AUTH_TOKEN, key: apKey() }, payload))
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(!res.ok) throw new Error(res.error || 'Something went wrong.');
+      return res;
+    });
+  }
+
+  function toast(msg, bad){
+    var t = $('toast');
+    $('toastMsg').textContent = msg;
+    t.classList.toggle('bad', !!bad);
+    t.classList.add('show');
+    clearTimeout(t._t);
+    t._t = setTimeout(function(){ t.classList.remove('show'); }, 4200);
+  }
+
+  /* ---- helpers ---- */
+  function driveId(url){
+    if(/\/folders\//.test(url)) return null;
+    var m = String(url).match(/\/d\/([a-zA-Z0-9_-]{10,})/) || String(url).match(/[?&]id=([a-zA-Z0-9_-]{10,})/);
+    return m ? m[1] : null;
+  }
+  function splitUrls(s){
+    return String(s || '').split(',').map(function(x){ return x.trim(); }).filter(Boolean);
+  }
+  function prettyBytes(n){
+    return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+  }
+  function toBase64(blob){
+    return new Promise(function(res, rej){
+      var fr = new FileReader();
+      fr.onload = function(){ res(String(fr.result).split(',')[1]); };
+      fr.onerror = function(){ rej(new Error('Could not read that file.')); };
+      fr.readAsDataURL(blob);
+    });
+  }
+  function whenText(iso){
+    if(!iso) return 'no time set';
+    var d = new Date(iso);
+    if(isNaN(d.getTime())) return String(iso);
+    return d.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  }
+
+  /* Drive serves thumbnails from two hosts and either can refuse depending on
+     the file. Try both before showing a placeholder. */
+  function loadDriveImg(img, id, size, onDone, onFail){
+    var srcs = [
+      'https://drive.google.com/thumbnail?id=' + id + '&sz=w' + size,
+      'https://lh3.googleusercontent.com/d/' + id + '=w' + size
+    ];
+    var i = 0;
+    img.addEventListener('load', function(){
+      if(!img.naturalWidth) return;    // some hosts answer 200 with an empty body
+      if(onDone) onDone();
+    });
+    img.addEventListener('error', function(){
+      if(i < srcs.length){ img.src = srcs[i++]; return; }
+      img.remove();
+      if(onFail) onFail();
+    });
+    img.referrerPolicy = 'no-referrer';
+    img.src = srcs[i++];               // listeners attached first, or fast failures are missed
+  }
+
+  /* Wire up every Drive <img> inside a container, clearing or rewriting the
+     "Loading…" line beside it. */
+  function loadDriveImgs(root){
+    [].forEach.call(root.querySelectorAll('img[data-drive]'), function(img){
+      var msg = img.parentNode.querySelector('.msg');
+      loadDriveImg(img, img.getAttribute('data-drive'), img.getAttribute('data-size'),
+        function(){ if(msg) msg.remove(); },
+        function(){ if(msg) msg.textContent = 'Could not load — check the file is shared “Anyone with the link”.'; });
+    });
+  }
+
+  /* ---- row state ---- */
+  function stateOf(r){
+    var ps = String(r.postStatus || '').trim().toLowerCase();
+    if(ps && ps !== 'queued') return /fail|error|drop/i.test(ps) ? 'failed' : 'done';
+    return r.status === 'Publish' ? 'approved' : 'review';
+  }
+  function badgeFor(r){
+    var s = stateOf(r);
+    if(s === 'failed')   return { cls:'bad',  txt:r.postStatus || 'failed' };
+    if(s === 'done')     return { cls:'done', txt:r.postStatus || 'posted' };
+    if(s === 'approved') return { cls:'live', txt:'approved' };
+    return { cls:'hold', txt:r.status || 'for review' };
+  }
+
+  var FILTERS = [
+    { id:'review',   name:'Needs review' },
+    { id:'approved', name:'Approved' },
+    { id:'done',     name:'Published' },
+    { id:'failed',   name:'Failed' },
+    { id:'all',      name:'All' }
+  ];
+  var rows = [], filter = 'review';
+
+  function renderFilters(){
+    $('filters').innerHTML = FILTERS.map(function(f){
+      var n = f.id === 'all' ? rows.length : rows.filter(function(r){ return stateOf(r) === f.id; }).length;
+      /* Failed is noise until something actually fails — hide it at zero. */
+      var hide = f.id === 'failed' && !n;
+      return '<button type="button" class="chip' + (filter === f.id ? ' on' : '') + '" data-f="' + f.id + '"' +
+             (hide ? ' hidden' : '') + ' role="tab" aria-selected="' + (filter === f.id) + '">' +
+             esc(f.name) + '<span class="n">' + n + '</span></button>';
+    }).join('');
+  }
+
+  function platsHtml(list){
+    if(!list || !list.length){
+      return '<span class="plats none">no platform set</span>';
+    }
+    return '<span class="plats">' + list.map(function(id){
+      var p = meta(id);
+      if(!p) return '';
+      return '<span class="pchip"><span class="sw" style="background:' + p.color + '">' +
+             '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + p.path + '"/></svg></span>' + esc(p.name) + '</span>';
+    }).join('') + '</span>';
+  }
+
+  function renderList(){
+    renderFilters();
+    var shown = filter === 'all' ? rows : rows.filter(function(r){ return stateOf(r) === filter; });
+
+    if(!shown.length){
+      var f = FILTERS.filter(function(x){ return x.id === filter; })[0];
+      $('list').innerHTML = '<div class="empty"><strong>Nothing here</strong>' +
+        (rows.length ? 'No posts are in “' + esc(f.name) + '” right now.' : 'Submit a post from the composer and it will show up here.') +
+        '</div>';
+      return;
+    }
+
+    $('list').innerHTML = shown.map(function(r, i){
+      var b = badgeFor(r);
+      var urls = splitUrls(r.driveUrl);
+      var first = urls.length ? driveId(urls[0]) : null;
+      var thumb = '<span class="rthumb" data-thumb="' + (first || '') + '">' +
+        (first ? '' : '<span class="ph">NO IMG</span>') +
+        (urls.length > 1 ? '<span class="more">+' + (urls.length - 1) + '</span>' : '') + '</span>';
+
+      var cap = String(r.caption || '').trim();
+      var editable = stateOf(r) === 'review' || stateOf(r) === 'approved';
+      var quick = !editable ? '' :
+        (r.status === 'Publish'
+          ? '<button type="button" class="quick" data-act="hold" data-row="' + r.row + '">Hold</button>'
+          : '<button type="button" class="quick go" data-act="approve" data-row="' + r.row + '">Approve</button>');
+
+      return '<div class="rowcard" style="--d:' + (i * 35) + 'ms" data-row="' + r.row + '" role="button" tabindex="0">' +
+        thumb +
+        '<span class="rbody">' +
+          '<span class="rcap' + (cap ? '' : ' none') + '">' + esc(cap.slice(0, 110) || 'No caption') + '</span>' +
+          '<span class="rmeta">' + platsHtml(r.platforms) +
+            '<span class="sep">·</span><span>' + urls.length + (urls.length === 1 ? ' item' : ' items') + '</span>' +
+            '<span class="sep">·</span><span>' + esc(whenText(r.scheduledAt)) + '</span>' +
+            (r.result ? '<span class="sep">·</span><span>' + esc(String(r.result).slice(0, 60)) + '</span>' : '') +
+          '</span>' +
+        '</span>' +
+        '<span class="badge ' + b.cls + '">' + esc(b.txt) + '</span>' +
+        quick +
+      '</div>';
+    }).join('');
+
+    /* thumbnails load after the markup exists, so the fallback host can kick in */
+    [].forEach.call($('list').querySelectorAll('.rthumb[data-thumb]'), function(box){
+      var id = box.getAttribute('data-thumb');
+      if(!id) return;
+      var img = document.createElement('img');
+      img.alt = '';
+      box.insertBefore(img, box.firstChild);
+      loadDriveImg(img, id, 120, null, function(){
+        box.insertBefore(Object.assign(document.createElement('span'),
+          { className:'ph', textContent:'NO IMG' }), box.firstChild);
+      });
+    });
+  }
+
+  function load(){
+    $('list').innerHTML = '<div class="empty">Loading…</div>';
+    call({ action:'list' })
+      .then(function(res){
+        rows = res.rows || [];
+        $('gate').hidden = true;
+        $('queue').hidden = false;
+        $('lockBtn').hidden = false;
+        renderList();
+      })
+      .catch(function(err){
+        setKey('');
+        $('gate').hidden = false;
+        $('queue').hidden = true;
+        $('lockBtn').hidden = true;
+        $('gateErr').textContent = err.message;
+        $('gateErr').classList.add('show');
+      });
+  }
+
+  /* ---- unlock / lock ---- */
+  $('unlock').addEventListener('click', function(){
+    var v = $('key').value.trim();
+    if(!v) return;
+    setKey(v);
+    $('key').value = '';
+    $('gateErr').classList.remove('show');
+    load();
+  });
+  $('key').addEventListener('keydown', function(e){
+    if(e.key === 'Enter'){ e.preventDefault(); $('unlock').click(); }
+  });
+  $('lockBtn').addEventListener('click', function(){
+    setKey('');
+    closeDrawer(true);
+    $('gate').hidden = false;
+    $('queue').hidden = true;
+    $('lockBtn').hidden = true;
+    $('gateErr').classList.remove('show');
+    toast('Locked. The key is gone from this tab.');
+  });
+  $('refresh').addEventListener('click', load);
+
+  $('filters').addEventListener('click', function(e){
+    var c = e.target.closest('.chip');
+    if(!c) return;
+    filter = c.getAttribute('data-f');
+    renderList();
+  });
+
+  /* ---- quick approve / hold, and opening the drawer ---- */
+  function setStatus(row, to, card){
+    if(card) card.classList.add('busy');
+    return call({ action:'setStatus', row:row, status:to })
+      .then(function(){
+        toast(to === 'Publish'
+          ? 'Row ' + row + ' approved — it publishes at its scheduled time.'
+          : 'Row ' + row + ' put back on hold.');
+        load();
+      })
+      .catch(function(err){
+        if(card) card.classList.remove('busy');
+        toast(err.message, true);
+        throw err;
+      });
+  }
+
+  $('list').addEventListener('click', function(e){
+    var q = e.target.closest('.quick');
+    if(q){
+      e.stopPropagation();
+      setStatus(Number(q.getAttribute('data-row')),
+                q.getAttribute('data-act') === 'approve' ? 'Publish' : 'For review',
+                q.closest('.rowcard')).catch(function(){});
+      return;
+    }
+    var card = e.target.closest('.rowcard');
+    if(card) openDrawer(Number(card.getAttribute('data-row')));
+  });
+  $('list').addEventListener('keydown', function(e){
+    if(e.key !== 'Enter' && e.key !== ' ') return;
+    var card = e.target.closest('.rowcard');
+    if(!card || e.target.closest('.quick')) return;
+    e.preventDefault();
+    openDrawer(Number(card.getAttribute('data-row')));
+  });
+
+  /* ==================================================================
+     DETAIL DRAWER — view the media, fix the post, then approve.
+     The draft is local until Save; nothing touches the sheet until then.
+     ================================================================== */
+  var draft = null;      // { row, caption, platforms, media[], date, time, readOnly }
+  var pristine = '';     // snapshot to detect real changes
+  var slide = 0;
+  var lastFocus = null;
+
+  function snapshot(d){
+    return JSON.stringify({
+      c: d.caption,
+      p: d.platforms.slice().sort(),
+      m: d.media.map(function(m){ return m.kind === 'file' ? 'f:' + m.name + ':' + m.size : 'l:' + m.url; }),
+      d: d.date, t: d.time
+    });
+  }
+  function dirty(){ return draft && snapshot(draft) !== pristine; }
+
+  function isoFrom(date, time){
+    if(!date || !time) return '';
+    var d = new Date(date + 'T' + time);
+    return isNaN(d.getTime()) ? '' : d.toISOString();
+  }
+  function partsFrom(iso){
+    var d = iso ? new Date(iso) : null;
+    if(!d || isNaN(d.getTime())) d = new Date();
+    var pad = function(n){ return String(n).padStart(2, '0'); };
+    return {
+      date: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()),
+      time: pad(d.getHours()) + ':' + pad(d.getMinutes())
+    };
+  }
+
+  function openDrawer(row){
+    var r = rows.filter(function(x){ return x.row === row; })[0];
+    if(!r) return;
+
+    var st = stateOf(r);
+    var when = partsFrom(r.scheduledAt);
+    draft = {
+      row: r.row,
+      caption: String(r.caption || ''),
+      platforms: (r.platforms || []).slice(),
+      media: splitUrls(r.driveUrl).map(function(u){
+        return { kind:'link', url:u, fileId:driveId(u), name:'Drive item' };
+      }),
+      date: when.date,
+      time: when.time,
+      hadSchedule: !!r.scheduledAt,
+      readOnly: st === 'done' || st === 'failed',
+      badge: badgeFor(r),
+      status: r.status,
+      result: r.result || ''
+    };
+    pristine = snapshot(draft);
+    slide = 0;
+
+    lastFocus = document.activeElement;
+    $('scrim').hidden = false;
+    $('drawer').hidden = false;
+    document.body.classList.add('locked');
+    requestAnimationFrame(function(){
+      $('scrim').classList.add('in');
+      $('drawer').classList.add('in');
+    });
+    renderDrawer();
+    $('drawer').focus();
+  }
+
+  function closeDrawer(force){
+    if(!draft) return;
+    if(!force && dirty() && !confirm('You have unsaved changes. Close anyway?')) return;
+    $('scrim').classList.remove('in');
+    $('drawer').classList.remove('in');
+    document.body.classList.remove('locked');
+    var d = $('drawer'), s = $('scrim');
+    setTimeout(function(){ d.hidden = true; s.hidden = true; }, 220);
+    draft = null;
+    revokeAll();
+    if(lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+
+  var objectUrls = [];
+  function revokeAll(){
+    objectUrls.forEach(function(u){ URL.revokeObjectURL(u); });
+    objectUrls = [];
+  }
+
+  function mediaTile(m, i){
+    var inner;
+    if(m.kind === 'file'){
+      inner = /^video\//.test(m.mimeType)
+        ? '<video src="' + m.objectUrl + '" muted playsinline preload="metadata"></video>'
+        : '<img alt="" src="' + m.objectUrl + '" />';
+    } else {
+      inner = m.fileId ? '<img alt="" data-drive="' + m.fileId + '" data-size="160" />' : '';
+    }
+    /* the remove control is its own button, so it is NOT nested inside the
+       select button — nested interactive elements are invalid and break
+       keyboard traversal */
+    return '<span class="tile' + (i === slide ? ' on' : '') + '">' +
+      '<button type="button" class="pick" data-slide="' + i + '" aria-label="Show item ' + (i + 1) + '">' +
+        inner + '</button>' +
+      '<span class="n">' + (i + 1) + '</span>' +
+      (draft.readOnly ? '' : '<button type="button" class="kill" data-rm="' + i + '" aria-label="Remove item ' + (i + 1) + '"><svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></svg></button>') +
+    '</span>';
+  }
+
+  function stageHtml(){
+    var m = draft.media[slide];
+    if(!m) return '<div class="stage"><span class="msg">No media on this post.</span></div>';
+    var inner;
+    if(m.kind === 'file'){
+      inner = /^video\//.test(m.mimeType)
+        ? '<video src="' + m.objectUrl + '" controls playsinline></video>'
+        : '<img alt="" src="' + m.objectUrl + '" />';
+    } else if(m.fileId){
+      inner = '<img alt="" data-drive="' + m.fileId + '" data-size="800" />';
+    } else {
+      inner = '<span class="msg">That link is not a Drive file.</span>';
+    }
+    return '<div class="stage"><span class="msg">Loading…</span>' + inner +
+      '<span class="idx">' + (slide + 1) + ' / ' + draft.media.length + '</span></div>';
+  }
+
+  function capHint(){
+    var len = draft.caption.trim().length;
+    var over = draft.platforms.filter(function(id){
+      var p = meta(id);
+      return p && len > p.limit;
+    });
+    if(over.length){
+      return '<span class="hint over">' + len.toLocaleString() + ' — too long for ' +
+             esc(over.map(function(id){ return meta(id).name; }).join(', ')) + '</span>';
+    }
+    return '<span class="hint">' + len.toLocaleString() + ' characters</span>';
+  }
+
+  /* Media count is a per-network ceiling: over it, that network is skipped
+     rather than trimmed, so say which ones before it happens. */
+  function mediaWarn(){
+    var n = draft.media.length;
+    var over = draft.platforms.filter(function(id){ return n > (MEDIA_LIMITS[id] || 99); });
+    if(!over.length) return '';
+    return '<p class="note warn">' + n + ' items is over the limit for ' +
+      esc(over.map(function(id){ return meta(id).name + ' (' + MEDIA_LIMITS[id] + ')'; }).join(', ')) +
+      ' — those will be skipped, the rest still publish.</p>';
+  }
+
+  function renderDrawer(){
+    var ro = draft.readOnly;
+    $('dSub').textContent = 'Row ' + draft.row + (ro ? ' · already handled' : '');
+    $('dBadge').className = 'badge ' + draft.badge.cls;
+    $('dBadge').textContent = draft.badge.txt;
+
+    $('dBody').innerHTML =
+      '<div class="fld">' +
+        '<span class="lab">Media <span class="hint">' + draft.media.length + ' of ' + MAX_MEDIA + '</span></span>' +
+        stageHtml() +
+        '<div class="strip" id="strip">' +
+          draft.media.map(mediaTile).join('') +
+          (ro || draft.media.length >= MAX_MEDIA ? '' :
+            '<button type="button" class="tile add" id="addFile" aria-label="Add a file">' +
+            '<svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>') +
+        '</div>' +
+        (ro ? '' :
+          '<div class="order">' +
+            '<button type="button" class="mini" id="mvUp"' + (slide <= 0 ? ' disabled' : '') + '>' +
+              '<svg viewBox="0 0 24 24"><polyline points="15,18 9,12 15,6"/></svg>Move earlier</button>' +
+            '<button type="button" class="mini" id="mvDown"' + (slide >= draft.media.length - 1 ? ' disabled' : '') + '>' +
+              'Move later<svg viewBox="0 0 24 24"><polyline points="9,18 15,12 9,6"/></svg></button>' +
+          '</div>' +
+          '<div class="addrow">' +
+            '<input type="url" id="addUrl" placeholder="Paste a Google Drive link" autocomplete="off" />' +
+            '<button type="button" class="mini" id="addLink">Add</button>' +
+          '</div>' +
+          '<p class="err-msg" id="mediaErr" role="alert"></p>') +
+        mediaWarn() +
+      '</div>' +
+
+      '<div class="fld">' +
+        '<span class="lab">Caption ' + capHint() + '</span>' +
+        '<textarea id="cap"' + (ro ? ' readonly' : '') + ' placeholder="Write your caption…">' + esc(draft.caption) + '</textarea>' +
+      '</div>' +
+
+      '<div class="fld">' +
+        '<span class="lab">Platforms <span class="hint">pick at least one</span></span>' +
+        '<div class="ptoggles">' + PLATFORMS.map(function(p){
+          var on = draft.platforms.indexOf(p.id) > -1;
+          return '<label class="ptog' + (on ? ' on' : '') + '">' +
+            '<input type="checkbox" value="' + p.id + '"' + (on ? ' checked' : '') + (ro ? ' disabled' : '') + ' />' +
+            '<span class="sw" style="background:' + p.color + '"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + p.path + '"/></svg></span>' +
+            esc(p.name) + '</label>';
+        }).join('') + '</div>' +
+      '</div>' +
+
+      '<div class="fld">' +
+        '<span class="lab">Publish at <span class="hint">your local time</span></span>' +
+        '<div class="when">' +
+          '<input type="date" id="dDate" value="' + esc(draft.date) + '"' + (ro ? ' disabled' : '') + ' />' +
+          '<input type="time" id="dTime" value="' + esc(draft.time) + '"' + (ro ? ' disabled' : '') + ' />' +
+        '</div>' +
+        '<p class="note" id="whenNote"></p>' +
+      '</div>' +
+
+      (draft.result ? '<div class="fld"><span class="lab">Automation said</span><p class="note">' + esc(draft.result) + '</p></div>' : '');
+
+    /* wired after the markup exists, so listeners land before src is set */
+    loadDriveImgs($('dBody'));
+
+    renderWhenNote();
+    $('dSave').disabled = ro || !dirty();
+    $('dFoot').hidden = ro;      // nothing on a handled row is actionable
+    $('dApprove').textContent = draft.status === 'Publish' ? 'Put on hold' : 'Approve';
+    wireDrawer();
+  }
+
+  function renderWhenNote(){
+    var el = $('whenNote');
+    if(!el) return;
+    var iso = isoFrom(draft.date, draft.time);
+    if(!iso){ el.textContent = 'Pick a date and a time.'; el.className = 'note warn'; return; }
+    var d = new Date(iso);
+    var past = d.getTime() < Date.now();
+    el.innerHTML = 'Publishes <b>' + esc(d.toLocaleString([], {
+      weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
+    })) + '</b>' + (past ? ' — that is in the past, so it goes out on the next sweep.' : '');
+    el.className = 'note' + (past ? ' warn' : '');
+  }
+
+  function mediaErr(msg){
+    var el = $('mediaErr');
+    if(!el) return;
+    el.textContent = msg || '';
+    el.classList.toggle('show', !!msg);
+  }
+
+  function wireDrawer(){
+    var strip = $('strip');
+    if(strip){
+      strip.addEventListener('click', function(e){
+        var kill = e.target.closest('[data-rm]');
+        if(kill){
+          e.preventDefault();
+          e.stopPropagation();
+          var idx = Number(kill.getAttribute('data-rm'));
+          if(draft.media.length <= 1){ mediaErr('A post needs at least one image or video.'); return; }
+          var gone = draft.media.splice(idx, 1)[0];
+          if(gone.objectUrl) URL.revokeObjectURL(gone.objectUrl);
+          if(slide >= draft.media.length) slide = draft.media.length - 1;
+          renderDrawer();
+          return;
+        }
+        var add = e.target.closest('#addFile');
+        if(add){ $('picker').click(); return; }
+        var pick = e.target.closest('.pick[data-slide]');
+        if(pick){ slide = Number(pick.getAttribute('data-slide')); renderDrawer(); }
+      });
+    }
+
+    var up = $('mvUp'), down = $('mvDown');
+    if(up) up.addEventListener('click', function(){ move(-1); });
+    if(down) down.addEventListener('click', function(){ move(1); });
+
+    var addLink = $('addLink');
+    if(addLink){
+      addLink.addEventListener('click', function(){
+        var input = $('addUrl'), url = input.value.trim();
+        if(!url) return;
+        if(/\/folders\//.test(url)){ mediaErr('That is a folder link — link a single file.'); return; }
+        var id = driveId(url);
+        if(!id){ mediaErr('That does not look like a Google Drive file link.'); return; }
+        if(draft.media.length >= MAX_MEDIA){ mediaErr('That is already ' + MAX_MEDIA + ' items.'); return; }
+        draft.media.push({ kind:'link', url:url, fileId:id, name:'Drive item' });
+        slide = draft.media.length - 1;
+        input.value = '';
+        mediaErr('');
+        renderDrawer();
+      });
+      $('addUrl').addEventListener('keydown', function(e){
+        if(e.key === 'Enter'){ e.preventDefault(); addLink.click(); }
+      });
+    }
+
+    var cap = $('cap');
+    if(cap && !draft.readOnly){
+      cap.addEventListener('input', function(){
+        draft.caption = cap.value;
+        var lab = cap.parentNode.querySelector('.hint');
+        var fresh = document.createElement('div');
+        fresh.innerHTML = capHint();
+        lab.replaceWith(fresh.firstChild);
+        $('dSave').disabled = !dirty();
+      });
+    }
+
+    [].forEach.call($('dBody').querySelectorAll('.ptog input'), function(cb){
+      cb.addEventListener('change', function(){
+        draft.platforms = [].slice.call($('dBody').querySelectorAll('.ptog input:checked'))
+                            .map(function(i){ return i.value; });
+        renderDrawer();
+      });
+    });
+
+    var dd = $('dDate'), tt = $('dTime');
+    if(dd && !draft.readOnly){
+      dd.addEventListener('change', function(){ draft.date = dd.value; renderWhenNote(); $('dSave').disabled = !dirty(); });
+      tt.addEventListener('change', function(){ draft.time = tt.value; renderWhenNote(); $('dSave').disabled = !dirty(); });
+      /* the whole field opens the picker, not just the little icon */
+      [dd, tt].forEach(function(el){
+        el.addEventListener('click', function(){ if(el.showPicker) try { el.showPicker(); } catch(e){} });
+      });
+    }
+  }
+
+  function move(dir){
+    var to = slide + dir;
+    if(to < 0 || to >= draft.media.length) return;
+    var m = draft.media.splice(slide, 1)[0];
+    draft.media.splice(to, 0, m);
+    slide = to;
+    renderDrawer();
+  }
+
+  $('picker').addEventListener('change', function(){
+    var files = [].slice.call($('picker').files || []);
+    $('picker').value = '';
+    if(!files.length || !draft) return;
+
+    var room = MAX_MEDIA - draft.media.length;
+    var rejected = [];
+    files.slice(0, room).forEach(function(f){
+      if(!/^(image|video)\//.test(f.type)){ rejected.push(f.name + ' is not an image or video'); return; }
+      if(f.size > MAX_UPLOAD_BYTES){ rejected.push(f.name + ' is ' + prettyBytes(f.size)); return; }
+      var url = URL.createObjectURL(f);
+      objectUrls.push(url);
+      draft.media.push({ kind:'file', blob:f, name:f.name, mimeType:f.type, size:f.size, objectUrl:url });
+    });
+    if(files.length > room) rejected.push('only ' + Math.max(0, room) + ' more would fit');
+    slide = draft.media.length - 1;
+    renderDrawer();
+    mediaErr(rejected.length ? 'Skipped — ' + rejected.join('; ') + '.' : '');
+  });
+
+  /* ---- save ---- */
+  $('dSave').addEventListener('click', function(){
+    if(!draft || draft.readOnly) return;
+    if(!draft.caption.trim()){ toast('The caption cannot be empty.', true); return; }
+    if(!draft.platforms.length){ toast('Pick at least one platform.', true); return; }
+    if(!draft.media.length){ toast('A post needs at least one image or video.', true); return; }
+    var iso = isoFrom(draft.date, draft.time);
+    if(!iso){ toast('Pick a valid date and time.', true); return; }
+
+    var btn = $('dSave');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    /* uploads travel as base64 on the same simple POST the composer uses */
+    Promise.all(draft.media.map(function(m){
+      if(m.kind === 'link') return Promise.resolve({ type:'link', url:m.url });
+      return toBase64(m.blob).then(function(b64){
+        return { type:'upload', name:m.name, mimeType:m.mimeType, dataBase64:b64 };
+      });
+    }))
+    .then(function(items){
+      return call({
+        action:'update',
+        row: draft.row,
+        caption: draft.caption,
+        platforms: draft.platforms,
+        media: items,
+        scheduledAt: iso
+      });
+    })
+    .then(function(res){
+      if(res.scheduleStored === false){
+        toast('Saved, but the sheet has no "post at" column — the time was not stored.', true);
+      } else {
+        toast('Row ' + draft.row + ' saved.');
+      }
+      var row = draft.row;
+      closeDrawer(true);
+      load();
+      return row;
+    })
+    .catch(function(err){
+      btn.textContent = 'Save changes';
+      btn.disabled = false;
+      toast(err.message, true);
+    });
+  });
+
+  /* ---- approve from the drawer ---- */
+  $('dApprove').addEventListener('click', function(){
+    if(!draft || draft.readOnly) return;
+    if(dirty() && !confirm('You have unsaved changes — approve without saving them?')) return;
+    var to = draft.status === 'Publish' ? 'For review' : 'Publish';
+    var btn = $('dApprove');
+    btn.disabled = true;
+    setStatus(draft.row, to, null)
+      .then(function(){ closeDrawer(true); })
+      .catch(function(){ btn.disabled = false; });
+  });
+
+  $('dClose').addEventListener('click', function(){ closeDrawer(); });
+  $('scrim').addEventListener('click', function(){ closeDrawer(); });
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && draft) closeDrawer();
+  });
+  window.addEventListener('beforeunload', function(e){
+    if(dirty()){ e.preventDefault(); e.returnValue = ''; }
+  });
+
+  /* still unlocked from earlier in this tab */
+  if(apKey()) load(); else renderFilters();
+})();
+</script>
+</body>
+</html>
