@@ -547,6 +547,57 @@
   .foot a{color:var(--muted);text-decoration:none;border-bottom:1px solid var(--stroke-2);transition:color var(--t-fast) var(--ease-out)}
   .foot a:hover{color:var(--text)}
 
+
+  /* ---------- sign-in gate ----------
+     Covers the page until Supabase says there is a session. This is a
+     convenience, NOT the security boundary: the page is a static file anyone
+     can read. The real check is in AppsScript.gs, which refuses every request
+     that does not carry a token Supabase vouches for.
+     ------------------------------------------------------------------ */
+  .authgate{position:fixed;inset:0;z-index:90;display:grid;place-items:center;padding:22px;background:var(--bg);overflow-y:auto}
+  .authgate[hidden]{display:none}
+  .authcard{
+    width:100%;max-width:390px;
+    background:linear-gradient(180deg,rgba(255,255,255,.055),rgba(255,255,255,.022));
+    border:1px solid var(--stroke);border-radius:20px;padding:26px;
+    box-shadow:0 24px 70px rgba(0,0,0,.5);
+    animation:rise .5s var(--ease-out) backwards;
+  }
+  .authcard .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;margin-bottom:22px;letter-spacing:-.02em}
+  .authcard .brand .mark{
+    width:32px;height:32px;border-radius:10px;display:grid;place-items:center;
+    background:linear-gradient(135deg,var(--brand),var(--brand-2));box-shadow:0 6px 22px rgba(109,94,252,.45);
+  }
+  .authcard .brand svg{width:17px;height:17px}
+  .authcard h1{font-size:21px;margin:0 0 7px;letter-spacing:-.02em;font-weight:750;line-height:1.2}
+  .authcard .blurb{color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 22px}
+  .alab{display:block;font-size:11.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:0 0 7px}
+  .authcard input{
+    width:100%;background:rgba(255,255,255,.035);border:1px solid var(--stroke);border-radius:12px;
+    padding:12px 14px;color:var(--text);font:inherit;font-size:14px;min-height:46px;margin-bottom:16px;
+    transition:border-color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out),box-shadow var(--t-fast) var(--ease-out);
+  }
+  .authcard input:focus{
+    outline:none;border-color:rgba(109,94,252,.65);background:rgba(255,255,255,.06);
+    box-shadow:0 0 0 4px rgba(109,94,252,.16);
+  }
+  .authbtn{
+    width:100%;min-height:48px;border-radius:12px;border:0;cursor:pointer;
+    font:inherit;font-size:14px;font-weight:700;color:#fff;
+    background:linear-gradient(100deg,var(--brand),var(--brand-3));
+    transition:filter var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out),opacity var(--t-fast) var(--ease-out);
+  }
+  .authbtn:hover{filter:brightness(1.12)}
+  .authbtn:active{transform:scale(.98)}
+  .authbtn:disabled{opacity:.5;cursor:not-allowed;filter:none;transform:none}
+  .autherr{color:var(--err);font-size:12.5px;margin:14px 0 0;display:none;line-height:1.55}
+  .autherr.show{display:block}
+  .authnote{color:#5b6379;font-size:11.5px;margin:18px 0 0;line-height:1.55;text-align:center}
+  /* who is signed in, in the header */
+  .who{display:flex;align-items:center;gap:9px;min-width:0}
+  .who .em{font-size:12px;color:var(--muted);max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  @media (max-width:560px){ .who .em{display:none} }
+
   /* ---------- reduced motion (WCAG / HIG) ---------- */
   @media (prefers-reduced-motion: reduce){
     *,*::before,*::after{
@@ -561,6 +612,27 @@
 </head>
 <body>
 
+<div class="authgate" id="authGate" hidden>
+  <form class="authcard" id="authForm" novalidate>
+    <div class="brand">
+      <span class="mark"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>
+      AutoPost
+    </div>
+    <h1>Sign in</h1>
+    <p class="blurb">This workspace is invite only. Use the address and password you were given &mdash; there is no sign-up.</p>
+
+    <label class="alab" for="authEmail">Email</label>
+    <input type="email" id="authEmail" autocomplete="username" inputmode="email" placeholder="you@company.com" required />
+
+    <label class="alab" for="authPass">Password</label>
+    <input type="password" id="authPass" autocomplete="current-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" required />
+
+    <button class="authbtn" type="submit" id="authGo">Sign in</button>
+    <p class="autherr" id="authErr" role="alert"></p>
+    <p class="authnote">Lost your password? Whoever set this up can reset it for you.</p>
+  </form>
+</div>
+
 <!-- decorative only -->
 <div class="bg" aria-hidden="true">
   <span class="blob b1"></span>
@@ -571,17 +643,24 @@
   <span class="vig"></span>
 </div>
 
-<div class="wrap">
+<div class="wrap" id="app" hidden>
 
   <header class="top rv" style="--d:0ms">
     <div class="logo">
       <span class="mark"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></svg></span>
       AutoPost
     </div>
-    <a class="ghost" href="./review.html">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-      Review queue
-    </a>
+    <div class="who">
+      <span class="em" id="whoEmail"></span>
+      <a class="ghost" href="./review.html">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        Review queue
+      </a>
+      <button class="ghost" type="button" id="signOut" title="Sign out">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Sign out
+      </button>
+    </div>
   </header>
 
   <div class="hero">
@@ -710,6 +789,7 @@
   <button class="undo" type="button" id="btnUndo">Undo</button>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (function(){
   /* ===== CONFIG =====================================================
@@ -724,6 +804,13 @@
      Protection, plus the daily ceilings the Apps Script enforces. */
   var AUTH_TOKEN     = 'ap_5iLo88aF_oQ0NG-hh1JKxDUi';
   var SHEET_URL      = 'https://docs.google.com/spreadsheets/d/1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k/edit';
+
+  /* Supabase sign-in. Copy both from the dashboard: Project Settings > API.
+     The key is the "anon public" one (or "publishable", sb_publishable_... on
+     newer projects) — it is meant to ship in a page. NEVER the service_role /
+     secret key. These two must match what is in AppsScript.gs and review.html. */
+  var SUPABASE_URL   = 'https://fhwqqekzkfxipqnmmqju.supabase.co';
+  var SUPABASE_KEY   = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZod3FxZWt6a2Z4aXBxbm1tcWp1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU1OTQ1MjIsImV4cCI6MjEwMTE3MDUyMn0.f0P891eCLzH_zm6QzQEdiCIcFs_ycOrT22xNWsE4-Qc';
   /* ================================================================== */
 
   var PLATFORMS = [
@@ -1674,9 +1761,13 @@
 
     /* Encoding happens here rather than on file pick, so a ~27 MB base64 string
        isn't sitting in memory the whole time someone edits their caption. */
-    encodeMedia()
-      .then(function(items){
-        payload = buildPayload(items);
+    /* The token goes in the BODY, not an Authorization header: a custom header
+       would make this a preflighted request, and Apps Script cannot answer the
+       OPTIONS call that follows. */
+    Promise.all([encodeMedia(), authed()])
+      .then(function(both){
+        payload = buildPayload(both[0]);
+        payload.accessToken = both[1];
         txt.textContent = 'Saving to sheet...';
         /* text/plain keeps this a "simple request" — no OPTIONS preflight,
            which Apps Script web apps cannot respond to. */
@@ -1688,6 +1779,7 @@
       })
       .then(function(r){ return r.json(); })
       .then(function(res){
+        checkSignedOut(res);
         if(!res || !res.ok) throw new Error(res && res.error ? res.error : 'The sheet rejected the submission.');
         saveHist(payload);
         var at = new Date(payload.scheduledAt);
@@ -1742,6 +1834,99 @@
         }, 1600);
       });
   });
+
+  /* ---- sign-in --------------------------------------------------------
+     Supabase owns the session; this only decides what the page shows. It is
+     NOT the security boundary — this file is static and readable by anyone.
+     The boundary is AppsScript.gs, which refuses every request that does not
+     carry an access token Supabase vouches for.
+     -------------------------------------------------------------------- */
+  var sb = null;
+  if(SUPABASE_URL && SUPABASE_KEY && window.supabase){
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+  }
+
+  function showGate(msg){
+    $('app').hidden = true;
+    $('authGate').hidden = false;
+    if(msg){ $('authErr').textContent = msg; $('authErr').classList.add('show'); }
+  }
+  function showApp(email){
+    $('authGate').hidden = true;
+    $('app').hidden = false;
+    var em = $('whoEmail');
+    if(em) em.textContent = email || '';
+  }
+
+  /* A fresh token per request. supabase-js refreshes in the background, so
+     this is normally just a read of what it already holds. */
+  function authed(){
+    if(!sb) return Promise.reject(new Error('Sign-in is not configured in this page.'));
+    return sb.auth.getSession().then(function(r){
+      var s = r.data && r.data.session;
+      if(!s){ showGate('Your session ended. Sign in again.'); throw new Error('Signed out.'); }
+      return s.access_token;
+    });
+  }
+
+  /* Refused server-side — deleted user, revoked or expired token. Drop the
+     local session too, or the page goes on insisting it is signed in. */
+  function checkSignedOut(res){
+    if(res && res.signedOut){
+      if(sb) sb.auth.signOut();
+      showGate(res.error || 'Please sign in again.');
+    }
+    return res;
+  }
+
+  $('authForm').addEventListener('submit', function(e){
+    e.preventDefault();
+    if(!sb) return;
+    var btn = $('authGo');
+    btn.disabled = true;
+    btn.textContent = 'Signing in…';
+    $('authErr').classList.remove('show');
+
+    sb.auth.signInWithPassword({
+      email: $('authEmail').value.trim(),
+      password: $('authPass').value
+    })
+      .then(function(r){
+        if(r.error) throw r.error;
+        $('authPass').value = '';
+        showApp(r.data.user && r.data.user.email);
+      })
+      .catch(function(err){
+        var m = String(err && err.message || '');
+        $('authErr').textContent = /invalid login/i.test(m)
+          ? 'That email and password do not match an account here.'
+          : (m || 'Could not sign in.');
+        $('authErr').classList.add('show');
+      })
+      .then(function(){ btn.disabled = false; btn.textContent = 'Sign in'; });
+  });
+
+  $('signOut').addEventListener('click', function(){
+    if(sb) sb.auth.signOut().then(function(){ location.reload(); });
+  });
+
+  /* Two different problems both leave sb null, and they need different fixes —
+     say which one it is, and disable the whole form rather than leaving a dead
+     button under fields that accept typing. */
+  if(!sb){
+    showGate(!window.supabase
+      ? 'Could not load the Supabase library. Check your connection (or an ad blocker) and reload.'
+      : 'Sign-in is not set up yet. Add SUPABASE_URL and SUPABASE_KEY near the top of this page, then reload.');
+    $('authGo').disabled = true;
+    $('authGo').textContent = 'Not set up yet';
+    $('authEmail').disabled = true;
+    $('authPass').disabled = true;
+  } else {
+    sb.auth.getSession().then(function(r){
+      var s = r.data && r.data.session;
+      if(s) showApp(s.user && s.user.email); else showGate();
+    });
+  }
 })();
 </script>
 </body>

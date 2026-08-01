@@ -8,10 +8,16 @@
  *       Execute as:      Me
  *       Who has access:  Anyone            <-- required, the browser posts anonymously
  *  4. Deploy > authorize when prompted > copy the /exec URL it gives you.
- *  5. Paste that URL into SHEET_ENDPOINT near the top of index.html.
+ *  5. Paste that URL into SHEET_ENDPOINT near the top of index.html and review.html.
+ *  6. Fill in SUPABASE_URL and SUPABASE_KEY below, and the matching pair in both
+ *     pages. Until you do, this endpoint refuses every request.
  *
  * After ANY edit here you must Deploy > Manage deployments > edit > Version: New version.
  * Editing the code alone does NOT update the live URL.
+ *
+ * Sign-in added a new permission (calling supabase.co). Google asks for it the
+ * first time the code RUNS, not when you deploy — so if requests start failing
+ * with an authorization error, open the editor, Run > verifyUser, and approve.
  */
 
 var SHEET_ID    = '1BDhyws9fM__wv7ygjkEepmB_psVh7QOoFk_x3ZsR48k';
@@ -23,6 +29,27 @@ var SHEET_NAME  = '';   // leave blank to use the first tab
    Deployment Protection. Change this string any time; change both files. */
 var SHARED_TOKEN = 'ap_5iLo88aF_oQ0NG-hh1JKxDUi';
 
+/* ============================================================
+   SUPABASE SIGN-IN  <-- FILL THESE IN
+   ============================================================
+   The pages are static files: anyone can view source, read SHARED_TOKEN and
+   POST here without ever seeing the login screen. So the login has to be
+   checked HERE, not in the browser — every action below is refused unless it
+   carries an access token Supabase agrees is real.
+
+   Both values are safe to paste in: the URL is public and the publishable key
+   is designed to ship in a web page. Copy them from
+   Supabase dashboard > Project Settings > API.
+
+   The key is named "anon public" on older projects and "publishable"
+   (sb_publishable_...) on newer ones — either works, they go in the same slot.
+   Do NOT paste the service_role / secret key: it bypasses every rule you set.
+
+   Leave these blank and the endpoint refuses everything. That is deliberate —
+   a half-configured login should fail shut, not open. */
+var SUPABASE_URL = 'https://fhwqqekzkfxipqnmmqju.supabase.co';          // e.g. https://abcdefgh.supabase.co   (no trailing slash)
+var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZod3FxZWt6a2Z4aXBxbm1tcWp1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU1OTQ1MjIsImV4cCI6MjEwMTE3MDUyMn0.f0P891eCLzH_zm6QzQEdiCIcFs_ycOrT22xNWsE4-Qc';          // the anon / publishable key
+
 /* Daily ceilings, counted per UTC day. The endpoint is public and now writes
    files into Drive, so an unbounded one is an invitation to fill it. */
 var MAX_ROWS_PER_DAY    = 200;
@@ -31,11 +58,16 @@ var MAX_UPLOADS_PER_DAY = 50;
 /* Instagram and LinkedIn cap carousels at 10; the form enforces the same. */
 var MAX_MEDIA = 10;
 
-/* Ceilings on the approvals endpoint. It is reachable by anyone with the page
-   URL, so it needs its own limits: fails guard the key, calls guard the
-   script's daily execution quota. */
-var MAX_APPROVAL_CALLS_PER_DAY = 500;
-var MAX_APPROVAL_FAILS_PER_DAY = 15;
+/* Ceilings on the sign-in check. The endpoint is public, so it needs its own
+   limits: fails slow down anyone throwing tokens at it, calls guard the
+   script's daily execution quota — which submissions share. */
+var MAX_AUTH_CALLS_PER_DAY = 2000;
+var MAX_AUTH_FAILS_PER_DAY = 50;
+
+/* How long a verified token is trusted without asking Supabase again. Tokens
+   live an hour by default, so five minutes is a large saving on round trips
+   and a small window in which a just-deleted user still gets through. */
+var AUTH_CACHE_SECONDS = 300;
 
 /* This script's only job is to append the row. n8n polls the sheet on its own
    schedule and decides when to publish — nothing here talks to n8n. */
@@ -51,13 +83,10 @@ var NEW_STATUS = 'For review';
    so it must match the workflow and the sheet's dropdown exactly. */
 var PUBLISH_STATUS = 'Publish';
 
-/* Approving from the web page is the same authority as publishing, so it needs
-   a real secret — NOT SHARED_TOKEN, which ships in the page source and only
-   turns away bots. This one lives in Script Properties: it is never in the
-   page, never in the repo, and only travels when someone types it.
-   Run newApprovalKey() once from the editor to create it.
-   No key set => the approvals panel is refused outright. */
-var APPROVAL_KEY_PROP = 'approvalKey';
+/* Approving used to need a separate typed-in key. Supabase sign-in replaced it:
+   being signed in IS the permission, and unlike a shared key it says WHO
+   approved and can be revoked for one person without changing anything for
+   everyone else. Nothing to configure here. */
 
 /* What a fresh row's `post status` says. n8n's sheet read filters on exactly
    this value, so published rows drop out of the query entirely instead of being
@@ -73,7 +102,7 @@ var MAX_UPLOAD_MB = 20;
 /* Bump this whenever you change this file. Opening the /exec URL in a browser
    shows the version that is actually LIVE — which is the deployed one, not the
    one in the editor. If it doesn't match, the deployment wasn't updated. */
-var VERSION = '6-review';
+var VERSION = '7-auth';
 
 /* Ceiling on a caption edited from the review page. Well above every network's
    own limit (Facebook's 63,206 is the largest) but far below the 50,000-char
@@ -93,7 +122,11 @@ var FIELD_ALIASES = {
   postStatus: ['post status', 'automation status', 'publish status'],
   scheduledAt:['post at', 'publish at', 'schedule', 'scheduled', 'scheduled at', 'post date', 'publish date'],
   timezone:   ['timezone', 'time zone', 'tz'],
-  timestamp:  ['timestamp', 'date', 'submitted', 'submitted at', 'created', 'time']
+  timestamp:  ['timestamp', 'date', 'submitted', 'submitted at', 'created', 'time'],
+  /* Optional. Add either column to the sheet and it fills itself in with the
+     signed-in address — the audit trail a shared key could not give you. */
+  submittedBy:['submitted by', 'created by', 'author'],
+  approvedBy: ['approved by', 'approver', 'reviewed by']
 };
 
 /* A column named after a platform gets TRUE / blank. */
@@ -125,9 +158,15 @@ function doPost(e) {
     /* Approvals ride the same transport as submissions — text/plain POST keeps
        this a "simple request", which is the only kind an Apps Script web app
        can answer without a CORS preflight. */
+    /* Everything past this line requires a signed-in user — submitting
+       included. The pages are static files, so this is the only place the
+       question can actually be answered. */
+    var user = verifyUser(body);
+    if (user.error) return respond({ ok: false, error: user.error, signedOut: true });
+
     var action = body.action || 'submit';
     if (action === 'list')      return respond(listRows(body));
-    if (action === 'setStatus') return respond(setRowStatus(body));
+    if (action === 'setStatus') return respond(setRowStatus(body, user));
     if (action === 'update')    return respond(updateRow(body));
 
     var items = body.media || [];
@@ -168,6 +207,7 @@ function doPost(e) {
     writeTextField(sheet, headers, newRow, FIELD_ALIASES.caption, body.caption || '');
     writeTextField(sheet, headers, newRow, FIELD_ALIASES.ytTitle,
                    body.youtube ? body.youtube.title : '');
+    writeTextField(sheet, headers, newRow, FIELD_ALIASES.submittedBy, user.email);
 
     var scheduleStored = writeSchedule(sheet, headers, newRow, body.scheduledAt);
 
@@ -214,55 +254,77 @@ function cellFor(header, body, platforms) {
 }
 
 /* ============================================================
-   APPROVALS — read pending rows and flip their status
+   SIGN-IN — every action above and below is gated on this
    ============================================================ */
 
 /**
- * Create the approval key. Run once from the editor, copy it out of the
- * execution log, and give it only to whoever is allowed to publish.
- * Running it again replaces the key and locks out the old one.
- */
-function newApprovalKey() {
-  var key = Utilities.getUuid().replace(/-/g, '').slice(0, 16);
-  PropertiesService.getScriptProperties().setProperty(APPROVAL_KEY_PROP, key);
-  Logger.log('Approval key (store it somewhere safe): ' + key);
-  return key;
-}
-
-/**
- * '' when allowed, otherwise the refusal to send back.
+ * Who is calling — { email, id } when the token is real, { error } otherwise.
  *
- * The endpoint is public and SHARED_TOKEN is in the page source, so anyone can
- * reach this. Two ceilings apply: failed attempts (brute force) and total calls
- * (burning the script's daily execution quota, which would take submissions
- * down with it).
+ * Asks Supabase rather than checking the signature here. Supabase signs tokens
+ * with HS256 on older projects and asymmetric keys on newer ones, and rotates
+ * them; /auth/v1/user is right under every one of those and does not care.
+ *
+ * There is no allowlist to maintain: with public sign-up disabled, the only
+ * accounts that exist are the ones you created, so "Supabase says this token is
+ * valid" already means "this is someone you invited". Deleting the user in the
+ * dashboard revokes them.
  */
-function checkApproval(body) {
+function verifyUser(body) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) {
+    return { error: 'Sign-in is not set up on the server yet. Fill in SUPABASE_URL and SUPABASE_KEY.' };
+  }
+
+  var token = String(body.accessToken || '');
+  if (!token || token.length > 4096) return { error: 'Please sign in.' };
+
   var props = PropertiesService.getScriptProperties();
-  var key = props.getProperty(APPROVAL_KEY_PROP) || '';
-  if (!key) return 'Approvals are not available.';
-
   var q = readQuota(props);
-  if (q.apFail >= MAX_APPROVAL_FAILS_PER_DAY) {
-    return 'Too many failed attempts. Approvals are locked until tomorrow.';
+  if (q.authFail >= MAX_AUTH_FAILS_PER_DAY) {
+    return { error: 'Too many failed sign-ins today. Try again tomorrow.' };
   }
-  if (q.apCall >= MAX_APPROVAL_CALLS_PER_DAY) {
-    return 'Too many approval requests today.';
+  if (q.authCall >= MAX_AUTH_CALLS_PER_DAY) {
+    return { error: 'This endpoint has hit its daily limit. Try again tomorrow.' };
   }
-  q.apCall += 1;
 
-  /* Compare every character rather than bailing at the first mismatch, so
-     response timing cannot be walked to recover the key. */
-  var given = String(body.key || '');
-  var diff = (given.length === key.length) ? 0 : 1;
-  for (var i = 0; i < key.length; i++) {
-    diff |= (key.charCodeAt(i) ^ (given.charCodeAt(i) || 0));
+  /* Cache on a digest, never the token itself: cache keys top out at 250 chars
+     and a JWT is longer, and a raw token does not belong in a shared cache. */
+  var cache = CacheService.getScriptCache();
+  var slot = 'u_' + Utilities.base64EncodeWebSafe(
+    Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token));
+  var hit = cache.get(slot);
+  if (hit) {
+    try { return JSON.parse(hit); } catch (ignored) {}
   }
-  var ok = diff === 0;
 
-  if (!ok) q.apFail += 1;
+  q.authCall += 1;
+  var res;
+  try {
+    res = UrlFetchApp.fetch(SUPABASE_URL.replace(/\/+$/, '') + '/auth/v1/user', {
+      method: 'get',
+      headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + token },
+      muteHttpExceptions: true
+    });
+  } catch (err) {
+    writeQuota(props, q);
+    return { error: 'Could not reach Supabase to check your sign-in.' };
+  }
+
+  if (res.getResponseCode() !== 200) {
+    q.authFail += 1;
+    writeQuota(props, q);
+    return { error: 'Your session has expired. Sign in again.' };
+  }
+
+  var user;
+  try { user = JSON.parse(res.getContentText()); }
+  catch (err) { writeQuota(props, q); return { error: 'Supabase sent back something unreadable.' }; }
+
   writeQuota(props, q);
-  return ok ? '' : 'Wrong approval key.';
+  if (!user || !user.id) return { error: 'Your session has expired. Sign in again.' };
+
+  var who = { email: String(user.email || ''), id: String(user.id) };
+  cache.put(slot, JSON.stringify(who), AUTH_CACHE_SECONDS);
+  return who;
 }
 
 function openSheet() {
@@ -280,9 +342,6 @@ function colIndex(headers, aliases) {
 
 /** The most recent rows, with just enough to decide whether to approve. */
 function listRows(body) {
-  var refusal = checkApproval(body);
-  if (refusal) return { ok: false, error: refusal };
-
   var sheet = openSheet();
   if (!sheet) return { ok: false, error: 'Sheet not found.' };
 
@@ -298,6 +357,7 @@ function listRows(body) {
   var cStatus = colIndex(headers, FIELD_ALIASES.status);
   var cPost   = colIndex(headers, FIELD_ALIASES.postStatus);
   var cWhen   = colIndex(headers, FIELD_ALIASES.scheduledAt);
+  var cBy     = colIndex(headers, FIELD_ALIASES.approvedBy);
   var cResult = -1;
   for (var h = 0; h < headers.length; h++) if (headers[h] === 'result') cResult = h;
 
@@ -313,6 +373,7 @@ function listRows(body) {
       postStatus: cPost   > -1 ? String(v[cPost])   : '',
       scheduledAt: cWhen  > -1 ? String(v[cWhen])   : '',
       result:     cResult > -1 ? String(v[cResult]) : '',
+      approvedBy: cBy     > -1 ? String(v[cBy])     : '',
       platforms: platformsIn(headers, v)
     });
   }
@@ -381,10 +442,7 @@ function openEditableRow(body) {
 }
 
 /** Flip one row between "held" and "approved". Nothing else is writable. */
-function setRowStatus(body) {
-  var refusal = checkApproval(body);
-  if (refusal) return { ok: false, error: refusal };
-
+function setRowStatus(body, user) {
   var status = String(body.status || '');
   if (status !== NEW_STATUS && status !== PUBLISH_STATUS) {
     return { ok: false, error: 'Status must be "' + NEW_STATUS + '" or "' + PUBLISH_STATUS + '".' };
@@ -397,6 +455,14 @@ function setRowStatus(body) {
   if (cStatus < 0) return { ok: false, error: 'No status column in this sheet.' };
 
   t.sheet.getRange(t.row, cStatus + 1).setValue(status);
+
+  /* Who signed off. This is the thing a shared key could never tell you —
+     silently skipped when the sheet has no such column. */
+  var by = colIndex(t.headers, FIELD_ALIASES.approvedBy);
+  if (by > -1) {
+    writeCell(t.sheet, t.row, by, status === PUBLISH_STATUS ? (user && user.email || '') : '', true);
+  }
+
   return { ok: true, row: t.row, status: status };
 }
 
@@ -408,9 +474,6 @@ function setRowStatus(body) {
  * optional — only what the page sends gets touched.
  */
 function updateRow(body) {
-  var refusal = checkApproval(body);
-  if (refusal) return { ok: false, error: refusal };
-
   var t = openEditableRow(body);
   if (t.error) return { ok: false, error: t.error };
   var sheet = t.sheet, row = t.row, headers = t.headers;
@@ -504,16 +567,16 @@ function driveIdFrom(url) {
 /** Today's counters, reset automatically when the date rolls over. */
 function readQuota(props) {
   var today = Utilities.formatDate(new Date(), 'UTC', 'yyyy-MM-dd');
-  var q = { date: today, rows: 0, uploads: 0, apCall: 0, apFail: 0 };
+  var q = { date: today, rows: 0, uploads: 0, authCall: 0, authFail: 0 };
   var raw = props.getProperty('quota');
   if (raw) {
     try {
       var prev = JSON.parse(raw);
       if (prev && prev.date === today) {
-        q.rows    = prev.rows    || 0;
-        q.uploads = prev.uploads || 0;
-        q.apCall  = prev.apCall  || 0;
-        q.apFail  = prev.apFail  || 0;
+        q.rows     = prev.rows     || 0;
+        q.uploads  = prev.uploads  || 0;
+        q.authCall = prev.authCall || 0;
+        q.authFail = prev.authFail || 0;
       }
     } catch (ignored) {}
   }
@@ -711,6 +774,9 @@ function doGet() {
     ok: true,
     service: 'AutoPost sheet endpoint',
     version: VERSION,
+    /* false means SUPABASE_URL / SUPABASE_KEY are still blank, and every POST
+       is being refused. Check this first when the pages say you are signed out. */
+    auth: !!(SUPABASE_URL && SUPABASE_KEY),
     uploads: true,
     ready: true
   });
