@@ -1670,7 +1670,11 @@
       warning += 'This post has ALREADY been published. Deleting the row removes your ' +
                  'record of it — it does NOT take the post down from the platform.\n\n';
     } else if(draft.state === 'working'){
-      warning += 'The automation is holding this row. ';
+      /* Marked as claimed, but the run that claimed it is long gone — say which
+         it is, because "the automation is using this" would be untrue. */
+      warning += 'This row is marked as being published, but the run that claimed it ' +
+                 'never finished. Deleting it removes it for good instead of retrying it — ' +
+                 'use Requeue if you want it to publish.\n\n';
     }
     warning += 'This cannot be undone.';
     if(!confirm(warning)) return;

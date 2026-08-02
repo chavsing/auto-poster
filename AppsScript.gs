@@ -126,7 +126,7 @@ var MAX_UPLOAD_MB = 20;
 /* Bump this whenever you change this file. Opening the /exec URL in a browser
    shows the version that is actually LIVE — which is the deployed one, not the
    one in the editor. If it doesn't match, the deployment wasn't updated. */
-var VERSION = '9-delete';
+var VERSION = '10-stale-claims';
 
 /* Ceiling on a caption edited from the review page. Well above every network's
    own limit (Facebook's 63,206 is the largest) but far below the 50,000-char
@@ -508,7 +508,11 @@ function openEditableRow(body) {
   if (cPost > -1) {
     var ps = String(sheet.getRange(row, cPost + 1).getValue()).trim().toLowerCase();
     if (ps === WORKING_STATUS) {
-      return { error: 'Row ' + row + ' is being published right now. If it stays like this, requeue it.' };
+      var cAt = colIndex(headers, FIELD_ALIASES.processedAt);
+      var at  = cAt > -1 ? sheet.getRange(row, cAt + 1).getValue() : '';
+      return { error: inFlight(ps, at, cAt > -1)
+        ? 'Row ' + row + ' is being published right now. Try again in a minute.'
+        : 'Row ' + row + ' was claimed by a run that never finished. Requeue it first, then edit it.' };
     }
     if (ps && ps !== QUEUED_STATUS) {
       return { error: 'Row ' + row + ' was already handled (' + ps + ').' };
@@ -562,6 +566,28 @@ function requeueRow(body) {
 }
 
 /**
+ * Is the automation actually holding this row *right now*?
+ *
+ * The WORKING_STATUS marker on its own does not answer that. A run that died
+ * leaves it behind permanently, and treating those as live made the queue
+ * deadlock: a stranded row blocked deletion of everything above it, and could
+ * not be deleted itself either.
+ *
+ * A live claim is one stamped within the last STUCK_AFTER_MINUTES. The
+ * workflow writes that stamp at the moment it claims a row, so a claim with no
+ * stamp predates the stamping and is definitely stale. Without the column at
+ * all there is no way to tell, so assume it is live and stay safe.
+ */
+function inFlight(postStatus, processedAt, haveStampColumn) {
+  if (String(postStatus).trim().toLowerCase() !== WORKING_STATUS) return false;
+  if (!haveStampColumn) return true;
+
+  var at = processedAt instanceof Date ? processedAt : new Date(String(processedAt));
+  if (!processedAt || isNaN(at.getTime())) return false;
+  return (new Date().getTime() - at.getTime()) < STUCK_AFTER_MINUTES * 60000;
+}
+
+/**
  * Delete a row outright.
  *
  * Two hazards, both handled here rather than trusted to the page:
@@ -589,20 +615,24 @@ function deleteSheetRow(body) {
   var cPost  = colIndex(headers, FIELD_ALIASES.postStatus);
   var cCap   = colIndex(headers, FIELD_ALIASES.caption);
   var cDrive = colIndex(headers, FIELD_ALIASES.driveUrl);
+  var cAt    = colIndex(headers, FIELD_ALIASES.processedAt);
 
-  var mine = values[row - 1];
-  if (cPost > -1 && String(mine[cPost]).trim().toLowerCase() === WORKING_STATUS) {
-    return { ok: false, error: 'Row ' + row + ' is being published right now. Wait for it, or requeue it first.' };
+  var live = function (r) {
+    return inFlight(cPost > -1 ? values[r - 1][cPost] : '',
+                    cAt  > -1 ? values[r - 1][cAt]  : '', cAt > -1);
+  };
+
+  if (live(row)) {
+    return { ok: false, error: 'Row ' + row + ' is being published right now. Wait for it to finish.' };
   }
 
-  /* Hazard 1. Only rows BELOW move, so only those matter. */
-  if (cPost > -1) {
-    for (var r = row + 1; r <= lastRow; r++) {
-      if (String(values[r - 1][cPost]).trim().toLowerCase() === WORKING_STATUS) {
-        return { ok: false, error: 'Row ' + r + ' is mid-publish. Deleting row ' + row +
-          ' would shift it, and the automation would write its result to the wrong row. ' +
-          'Let row ' + r + ' finish, or requeue it, then try again.' };
-      }
+  /* Hazard 1. Only rows BELOW move, so only those matter — and only if one is
+     genuinely running. A stranded claim is not holding anything. */
+  for (var r = row + 1; r <= lastRow; r++) {
+    if (live(r)) {
+      return { ok: false, error: 'Row ' + r + ' is being published right now. Deleting row ' + row +
+        ' would shift it, and the automation would write its result to the wrong row. ' +
+        'Try again in a minute.' };
     }
   }
 
