@@ -93,6 +93,30 @@ var PUBLISH_STATUS = 'Publish';
    re-fetched on every sweep forever. Must match the filter in the workflow. */
 var QUEUED_STATUS = 'queued';
 
+/* What n8n writes the moment it CLAIMS a row, before it starts publishing.
+   Must match "Mark processing" in the workflow. A row sitting here is either
+   mid-flight or was abandoned by a run that died — either way n8n will never
+   look at it again, because its sheet read only fetches 'queued'. The review
+   page can hand such a row back with the `requeue` action. */
+var WORKING_STATUS = 'processing';
+
+/* How long a row may sit at WORKING_STATUS before the review page calls it
+   stuck. Comfortably longer than a real publish, which is ~30 seconds. */
+var STUCK_AFTER_MINUTES = 15;
+
+/* Row ceilings for the review page.
+   Anything the automation has NOT finished is work, and work must never
+   silently vanish off the end of the list — that is the only route it has to
+   being published. Finished rows are just context, so they stay capped. */
+var MAX_PENDING_ROWS = 200;
+var MAX_HANDLED_ROWS = 25;
+
+/* Per file AND across one submission. Uploads travel base64-encoded, which adds
+   about a third, and an Apps Script web app rejects requests over roughly
+   50 MB — so ten 20 MB files was never actually possible. Failing here, before
+   the browser spends a minute encoding, beats failing at the end. */
+var MAX_TOTAL_UPLOAD_MB = 30;
+
 /* Uploaded files land here, in the Drive of whoever deployed this script.
    Created on first use. Every file is link-shared, because the automation
    fetches it over the public internet. */
@@ -102,7 +126,7 @@ var MAX_UPLOAD_MB = 20;
 /* Bump this whenever you change this file. Opening the /exec URL in a browser
    shows the version that is actually LIVE — which is the deployed one, not the
    one in the editor. If it doesn't match, the deployment wasn't updated. */
-var VERSION = '7-auth';
+var VERSION = '8-hardening';
 
 /* Ceiling on a caption edited from the review page. Well above every network's
    own limit (Facebook's 63,206 is the largest) but far below the 50,000-char
@@ -126,7 +150,10 @@ var FIELD_ALIASES = {
   /* Optional. Add either column to the sheet and it fills itself in with the
      signed-in address — the audit trail a shared key could not give you. */
   submittedBy:['submitted by', 'created by', 'author'],
-  approvedBy: ['approved by', 'approver', 'reviewed by']
+  approvedBy: ['approved by', 'approver', 'reviewed by'],
+  /* Written by n8n — when it claimed the row, then when it finished. The review
+     page reads it to work out whether a claimed row is mid-flight or stranded. */
+  processedAt:['processed at', 'processed', 'published at']
 };
 
 /* A column named after a platform gets TRUE / blank. */
@@ -168,11 +195,32 @@ function doPost(e) {
     if (action === 'list')      return respond(listRows(body));
     if (action === 'setStatus') return respond(setRowStatus(body, user));
     if (action === 'update')    return respond(updateRow(body));
+    if (action === 'requeue')   return respond(requeueRow(body));
+    if (action === 'delete')    return respond(deleteSheetRow(body));
+
+    /* Anything else is NOT a submission. Falling through used to mean a newer
+       page calling an action this deployment does not have yet got validated
+       as a new post, and answered "at least one image and a caption are
+       required" — which is true, and tells you nothing about what went wrong.
+       Name the action and the version instead: that identifies a stale
+       deployment on sight. */
+    if (action !== 'submit') {
+      return respond({
+        ok: false,
+        error: 'This endpoint does not know the action "' + action + '". It is running ' +
+               VERSION + ' — redeploy AppsScript.gs as a NEW VERSION.',
+        unknownAction: action,
+        version: VERSION
+      });
+    }
 
     var items = body.media || [];
     if (items.length > MAX_MEDIA) {
       return respond({ ok: false, error: 'At most ' + MAX_MEDIA + ' media items per post.' });
     }
+
+    var tooBig = checkTotalUpload(items);
+    if (tooBig) return respond({ ok: false, error: tooBig });
 
     var overQuota = checkQuota(countUploads(items));
     if (overQuota) return respond({ ok: false, error: overQuota });
@@ -340,7 +388,15 @@ function colIndex(headers, aliases) {
   return -1;
 }
 
-/** The most recent rows, with just enough to decide whether to approve. */
+/**
+ * Rows for the review page.
+ *
+ * Split deliberately. A row the automation has not finished with is WORK: the
+ * only way it ever publishes is somebody approving it here, so it must never
+ * fall off the end of the list — this used to return "the newest 25", which
+ * meant the 26th pending post could not be approved from the app at all.
+ * Finished rows are only context, so those stay capped.
+ */
 function listRows(body) {
   var sheet = openSheet();
   if (!sheet) return { ok: false, error: 'Sheet not found.' };
@@ -358,13 +414,25 @@ function listRows(body) {
   var cPost   = colIndex(headers, FIELD_ALIASES.postStatus);
   var cWhen   = colIndex(headers, FIELD_ALIASES.scheduledAt);
   var cBy     = colIndex(headers, FIELD_ALIASES.approvedBy);
+  var cAt     = colIndex(headers, FIELD_ALIASES.processedAt);
   var cResult = -1;
   for (var h = 0; h < headers.length; h++) if (headers[h] === 'result') cResult = h;
 
-  var take = Math.min(lastRow - 1, 25);          // newest 25 is plenty to review
-  var rows = [];
-  for (var r = lastRow; r > lastRow - take; r--) {
+  /* The whole sheet is already in memory, so scanning all of it costs nothing
+     extra — the old cap only ever trimmed the reply. */
+  var rows = [], handled = 0, dropped = 0;
+  for (var r = lastRow; r >= 2; r--) {
     var v = values[r - 1];
+    var ps = (cPost > -1 ? String(v[cPost]) : '').trim().toLowerCase();
+    var open = !ps || ps === QUEUED_STATUS || ps === WORKING_STATUS;
+
+    if (open) {
+      if (rows.length - handled >= MAX_PENDING_ROWS) { dropped++; continue; }
+    } else {
+      if (handled >= MAX_HANDLED_ROWS) continue;
+      handled++;
+    }
+
     rows.push({
       row: r,
       driveUrl:   cDrive  > -1 ? String(v[cDrive])  : '',
@@ -374,6 +442,7 @@ function listRows(body) {
       scheduledAt: cWhen  > -1 ? String(v[cWhen])   : '',
       result:     cResult > -1 ? String(v[cResult]) : '',
       approvedBy: cBy     > -1 ? String(v[cBy])     : '',
+      processedAt: cAt    > -1 ? String(v[cAt])     : '',
       platforms: platformsIn(headers, v)
     });
   }
@@ -381,6 +450,10 @@ function listRows(body) {
     ok: true,
     rows: rows,
     statuses: [NEW_STATUS, PUBLISH_STATUS],
+    working: WORKING_STATUS,
+    stuckAfterMinutes: STUCK_AFTER_MINUTES,
+    /* >0 means work is being hidden. Say so rather than looking complete. */
+    dropped: dropped,
     editable: colIndex(headers, FIELD_ALIASES.caption) > -1
   };
 }
@@ -434,11 +507,119 @@ function openEditableRow(body) {
   var cPost = colIndex(headers, FIELD_ALIASES.postStatus);
   if (cPost > -1) {
     var ps = String(sheet.getRange(row, cPost + 1).getValue()).trim().toLowerCase();
+    if (ps === WORKING_STATUS) {
+      return { error: 'Row ' + row + ' is being published right now. If it stays like this, requeue it.' };
+    }
     if (ps && ps !== QUEUED_STATUS) {
       return { error: 'Row ' + row + ' was already handled (' + ps + ').' };
     }
   }
   return { sheet: sheet, row: row, headers: headers };
+}
+
+/**
+ * Hand a stuck row back to the automation.
+ *
+ * n8n claims a row by writing WORKING_STATUS, then publishes, then writes the
+ * outcome. If the run dies in between, the row is stranded: n8n's sheet read
+ * only fetches 'queued', so it is never picked up again, and every edit path
+ * here refuses it because it looks claimed. Nothing else in the system can free
+ * it — which made a dropped run a permanent, silent loss.
+ *
+ * Only WORKING_STATUS is resettable. A row that reached a real outcome
+ * (posted, failed) is history, and re-running it would publish twice.
+ */
+function requeueRow(body) {
+  var sheet = openSheet();
+  if (!sheet) return { ok: false, error: 'Sheet not found.' };
+
+  var row = Number(body.row);
+  var lastRow = sheet.getLastRow();
+  if (!(row >= 2 && row <= lastRow)) return { ok: false, error: 'Row ' + body.row + ' is out of range.' };
+
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0]
+                     .map(function (h) { return String(h).trim().toLowerCase(); });
+
+  var cPost = colIndex(headers, FIELD_ALIASES.postStatus);
+  if (cPost < 0) return { ok: false, error: 'No "post status" column in this sheet.' };
+
+  var ps = String(sheet.getRange(row, cPost + 1).getValue()).trim().toLowerCase();
+  if (ps !== WORKING_STATUS) {
+    return { ok: false, error: ps === QUEUED_STATUS || !ps
+      ? 'Row ' + row + ' is already waiting to be picked up.'
+      : 'Row ' + row + ' already finished (' + ps + ') — requeuing it would post it twice.' };
+  }
+
+  writeCell(sheet, row, cPost, QUEUED_STATUS, true);
+
+  /* Clear the stale outcome so the row does not carry a message from the run
+     that died into the run that succeeds. */
+  for (var i = 0; i < headers.length; i++) {
+    if (headers[i] === 'result') { writeCell(sheet, row, i, '', true); break; }
+  }
+  return { ok: true, row: row };
+}
+
+/**
+ * Delete a row outright.
+ *
+ * Two hazards, both handled here rather than trusted to the page:
+ *
+ * 1. Deleting shifts every row BELOW it up by one, and n8n addresses rows by
+ *    number — it reads row_number, publishes for ~30 s, then writes the result
+ *    back to that number. A delete inside that window makes it stamp the wrong
+ *    row. So: refuse while anything below is mid-publish.
+ * 2. The page is working from a list it fetched some time ago. If the sheet
+ *    moved since, "row 6" is no longer the row the person looked at. So the
+ *    caller sends what it believes is there and we check before deleting.
+ */
+function deleteSheetRow(body) {
+  var sheet = openSheet();
+  if (!sheet) return { ok: false, error: 'Sheet not found.' };
+
+  var row = Number(body.row);
+  var lastRow = sheet.getLastRow();
+  if (!(row >= 2 && row <= lastRow)) return { ok: false, error: 'Row ' + body.row + ' is out of range.' };
+
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var headers = values[0].map(function (h) { return String(h).trim().toLowerCase(); });
+
+  var cPost  = colIndex(headers, FIELD_ALIASES.postStatus);
+  var cCap   = colIndex(headers, FIELD_ALIASES.caption);
+  var cDrive = colIndex(headers, FIELD_ALIASES.driveUrl);
+
+  var mine = values[row - 1];
+  if (cPost > -1 && String(mine[cPost]).trim().toLowerCase() === WORKING_STATUS) {
+    return { ok: false, error: 'Row ' + row + ' is being published right now. Wait for it, or requeue it first.' };
+  }
+
+  /* Hazard 1. Only rows BELOW move, so only those matter. */
+  if (cPost > -1) {
+    for (var r = row + 1; r <= lastRow; r++) {
+      if (String(values[r - 1][cPost]).trim().toLowerCase() === WORKING_STATUS) {
+        return { ok: false, error: 'Row ' + r + ' is mid-publish. Deleting row ' + row +
+          ' would shift it, and the automation would write its result to the wrong row. ' +
+          'Let row ' + r + ' finish, or requeue it, then try again.' };
+      }
+    }
+  }
+
+  /* Hazard 2. Compare against what the page displayed. */
+  var norm = function (s) { return String(s == null ? '' : s).trim().slice(0, 120); };
+  if (body.expect) {
+    var wantCap = norm(body.expect.caption), wantUrl = norm(body.expect.driveUrl);
+    var haveCap = cCap   > -1 ? norm(mine[cCap])   : '';
+    var haveUrl = cDrive > -1 ? norm(mine[cDrive]) : '';
+    if (wantCap !== haveCap || wantUrl !== haveUrl) {
+      return { ok: false, error: 'Row ' + row + ' is not what your page is showing — the sheet changed. ' +
+        'Refresh and try again.' };
+    }
+  }
+
+  sheet.deleteRow(row);
+  return { ok: true, row: row };
 }
 
 /** Flip one row between "held" and "approved". Nothing else is writable. */
@@ -515,6 +696,9 @@ function updateRow(body) {
     if (items.length > MAX_MEDIA) {
       return { ok: false, error: 'At most ' + MAX_MEDIA + ' media items per post.' };
     }
+    var tooBig = checkTotalUpload(items);
+    if (tooBig) return { ok: false, error: tooBig };
+
     var overQuota = checkUploadQuota(countUploads(items));
     if (overQuota) return { ok: false, error: overQuota };
 
@@ -629,6 +813,28 @@ function countUploads(items) {
     if (items[i] && items[i].type === 'upload') n++;
   }
   return n;
+}
+
+/**
+ * '' when the upload set fits, otherwise the refusal.
+ *
+ * base64 carries 3 bytes in every 4 characters, so the decoded size is 3/4 of
+ * the string length. Checked as a SET, not per file: ten files that each pass
+ * the individual limit still add up to a request Apps Script will not accept.
+ */
+function checkTotalUpload(items) {
+  var bytes = 0;
+  for (var i = 0; i < (items || []).length; i++) {
+    var it = items[i];
+    if (it && it.type === 'upload' && it.dataBase64) {
+      bytes += Math.floor(String(it.dataBase64).length * 3 / 4);
+    }
+  }
+  if (bytes > MAX_TOTAL_UPLOAD_MB * 1024 * 1024) {
+    return 'That is ' + Math.round(bytes / 1048576) + ' MB of uploads — the limit is ' +
+           MAX_TOTAL_UPLOAD_MB + ' MB per post. Remove a file, or paste Drive links instead.';
+  }
+  return '';
 }
 
 /**

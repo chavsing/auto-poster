@@ -176,6 +176,7 @@
   .badge.live{background:rgba(46,204,143,.14);border-color:rgba(46,204,143,.4);color:#7ee2b8}
   .badge.done{background:rgba(109,94,252,.14);border-color:rgba(109,94,252,.4);color:#c3bcff}
   .badge.bad{background:rgba(255,95,112,.14);border-color:rgba(255,95,112,.42);color:#ffa3ad}
+  .badge.work{background:rgba(255,202,122,.14);border-color:rgba(255,202,122,.42);color:#ffca7a}
 
   .quick{
     flex:0 0 auto;padding:9px 15px;min-height:38px;border-radius:10px;cursor:pointer;
@@ -187,6 +188,16 @@
   .quick:active{transform:scale(.96)}
   .quick.go{background:linear-gradient(100deg,var(--brand),var(--brand-3));border-color:transparent;color:#fff}
   .quick.go:hover{filter:brightness(1.12)}
+  .quick.warn{background:rgba(255,202,122,.16);border-color:rgba(255,202,122,.45);color:#ffca7a}
+  .quick.warn:hover{background:rgba(255,202,122,.26)}
+
+  /* work being hidden by the row ceiling — must not look like "all clear" */
+  .hidden-note{
+    display:flex;align-items:center;gap:9px;margin-bottom:11px;padding:11px 14px;
+    border:1px solid rgba(255,202,122,.4);background:rgba(255,202,122,.09);
+    border-radius:13px;color:#ffca7a;font-size:12.5px;line-height:1.5;
+  }
+  .hidden-note[hidden]{display:none}
 
   .empty{color:var(--muted);font-size:13.5px;padding:34px 4px;text-align:center}
   .empty strong{display:block;color:var(--text);font-size:15px;margin-bottom:6px;font-weight:650}
@@ -225,6 +236,14 @@
   }
   .dfoot .btn{flex:1}
   .dfoot[hidden]{display:none}
+  /* destructive and irreversible, so it does not compete for width with the
+     things you will actually press most of the time */
+  .dfoot .btn.danger{
+    flex:0 0 auto;width:48px;padding:0;
+    background:rgba(255,95,112,.1);border:1px solid rgba(255,95,112,.34);color:#ffa3ad;
+  }
+  .dfoot .btn.danger:hover{background:rgba(255,95,112,.22);border-color:rgba(255,95,112,.6);filter:none}
+  .dfoot .btn.danger svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 
   .fld{margin-bottom:22px}
   .fld:last-child{margin-bottom:4px}
@@ -458,6 +477,7 @@
         Refresh
       </button>
     </div>
+    <p class="hidden-note" id="hiddenNote" hidden></p>
     <div id="list" aria-live="polite"></div>
   </section>
 
@@ -474,6 +494,9 @@
   </div>
   <div class="dbody" id="dBody"></div>
   <div class="dfoot" id="dFoot">
+    <button class="btn danger" type="button" id="dDelete" title="Delete this row from the sheet" aria-label="Delete this row">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    </button>
     <button class="btn flat" type="button" id="dSave" disabled>Save changes</button>
     <button class="btn" type="button" id="dApprove">Approve</button>
   </div>
@@ -508,6 +531,12 @@
   var MEDIA_LIMITS = { facebook:30, instagram:10, twitter:4, linkedin:10, youtube:1 };
   var MAX_MEDIA = 10;
   var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+  /* Per post, across every uploaded file. Uploads travel base64-encoded, which
+     adds a third, and the endpoint refuses much past 50 MB — so each file being
+     under 20 MB is not enough on its own. Matches MAX_TOTAL_UPLOAD_MB in
+     AppsScript.gs, which enforces the same limit server-side. */
+  var MAX_TOTAL_MB    = 30;
+  var MAX_TOTAL_BYTES = MAX_TOTAL_MB * 1024 * 1024;
 
   var $ = function(id){ return document.getElementById(id); };
   function meta(id){ return PLATFORMS.filter(function(p){ return p.id === id; })[0]; }
@@ -555,6 +584,31 @@
   function splitUrls(s){
     return String(s || '').split(',').map(function(x){ return x.trim(); }).filter(Boolean);
   }
+  /* Bytes actually leaving the browser. Drive links cost nothing — the
+     automation fetches those itself, they never ride in this request. */
+  function draftBytes(){
+    if(!draft) return 0;
+    return draft.media.reduce(function(n, m){
+      return n + (m.kind === 'file' ? (m.size || 0) : 0);
+    }, 0);
+  }
+
+  /* '' when YouTube is fine (or not selected), otherwise why it is not.
+     Uploads carry a MIME type so we can tell; a Drive link does not, so links
+     are never blocked — better a rare platform-side failure than refusing a
+     video we simply could not identify. */
+  function youtubeMediaProblem(list, plats){
+    if(plats.indexOf('youtube') === -1 || !list.length) return '';
+    var files = list.filter(function(m){ return m.kind === 'file'; });
+    if(files.some(function(m){ return /^video\//.test(m.mimeType); })) return '';
+    if(files.length === list.length){
+      return list.length === 1
+        ? 'YouTube needs a video — that is an image. Untick YouTube, or swap the file.'
+        : 'YouTube needs a video and these are all images. Untick YouTube, or add the video.';
+    }
+    return '';
+  }
+
   function prettyBytes(n){
     return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
   }
@@ -605,14 +659,50 @@
     });
   }
 
-  /* ---- row state ---- */
+  /* ---- row state ----------------------------------------------------
+     'processing' is the automation having CLAIMED a row, before it has
+     published. It used to be lumped in with 'done', which read as "posted"
+     for something that had not posted — and if the run died there, the row
+     was stranded: n8n only re-reads 'queued', so nothing would ever pick it
+     up again. It gets its own state, and a way out.
+     ------------------------------------------------------------------ */
+  var WORKING = 'processing';
+  var STUCK_MINUTES = 15;
+
   function stateOf(r){
     var ps = String(r.postStatus || '').trim().toLowerCase();
+    if(ps === WORKING) return 'working';
     if(ps && ps !== 'queued') return /fail|error|drop/i.test(ps) ? 'failed' : 'done';
     return r.status === 'Publish' ? 'approved' : 'review';
   }
+
+  /* Claimed a long time ago and still claimed — the run that took it is gone.
+     Only true when we can PROVE it from the claim timestamp. */
+  function isStuck(r){
+    if(stateOf(r) !== 'working') return false;
+    var at = r.processedAt ? new Date(r.processedAt) : null;
+    if(!at || isNaN(at.getTime())) return false;
+    return (Date.now() - at.getTime()) > STUCK_MINUTES * 60000;
+  }
+
+  /* No claim timestamp — the sheet has no "processed at" column, or the run
+     that took this row predates it. Cannot tell stranded from mid-flight, so
+     offer the way out but do NOT claim it is stuck: requeuing something that
+     is genuinely still running publishes it twice. */
+  function mayBeStuck(r){
+    return stateOf(r) === 'working' && !isStuck(r) &&
+           !(r.processedAt && !isNaN(new Date(r.processedAt).getTime()));
+  }
+  /* Both cases get the button; only one gets the confident label. */
+  function canRequeue(r){ return isStuck(r) || mayBeStuck(r); }
+
   function badgeFor(r){
     var s = stateOf(r);
+    if(s === 'working'){
+      if(isStuck(r))    return { cls:'bad',  txt:'stuck' };
+      if(mayBeStuck(r)) return { cls:'work', txt:'publishing?' };
+      return { cls:'work', txt:'publishing' };
+    }
     if(s === 'failed')   return { cls:'bad',  txt:r.postStatus || 'failed' };
     if(s === 'done')     return { cls:'done', txt:r.postStatus || 'posted' };
     if(s === 'approved') return { cls:'live', txt:'approved' };
@@ -622,17 +712,18 @@
   var FILTERS = [
     { id:'review',   name:'Needs review' },
     { id:'approved', name:'Approved' },
+    { id:'working',  name:'Publishing' },
     { id:'done',     name:'Published' },
     { id:'failed',   name:'Failed' },
     { id:'all',      name:'All' }
   ];
-  var rows = [], filter = 'review';
+  var rows = [], filter = 'review', dropped = 0;
 
   function renderFilters(){
     $('filters').innerHTML = FILTERS.map(function(f){
       var n = f.id === 'all' ? rows.length : rows.filter(function(r){ return stateOf(r) === f.id; }).length;
-      /* Failed is noise until something actually fails — hide it at zero. */
-      var hide = f.id === 'failed' && !n;
+      /* Failed and Publishing are noise until they have something in them. */
+      var hide = (f.id === 'failed' || f.id === 'working') && !n;
       return '<button type="button" class="chip' + (filter === f.id ? ' on' : '') + '" data-f="' + f.id + '"' +
              (hide ? ' hidden' : '') + ' role="tab" aria-selected="' + (filter === f.id) + '">' +
              esc(f.name) + '<span class="n">' + n + '</span></button>';
@@ -653,6 +744,15 @@
 
   function renderList(){
     renderFilters();
+
+    /* Never let a trimmed list read as an empty queue. */
+    var note = $('hiddenNote');
+    note.hidden = !dropped;
+    if(dropped){
+      note.textContent = dropped + ' more post' + (dropped === 1 ? ' is' : 's are') +
+        ' still waiting but not shown here. Clear some of the queue, or approve them in the sheet.';
+    }
+
     var shown = filter === 'all' ? rows : rows.filter(function(r){ return stateOf(r) === filter; });
 
     if(!shown.length){
@@ -672,11 +772,17 @@
         (urls.length > 1 ? '<span class="more">+' + (urls.length - 1) + '</span>' : '') + '</span>';
 
       var cap = String(r.caption || '').trim();
-      var editable = stateOf(r) === 'review' || stateOf(r) === 'approved';
-      var quick = !editable ? '' :
-        (r.status === 'Publish'
+      var st = stateOf(r);
+      var editable = st === 'review' || st === 'approved';
+      var quick = '';
+      if(editable){
+        quick = r.status === 'Publish'
           ? '<button type="button" class="quick" data-act="hold" data-row="' + r.row + '">Hold</button>'
-          : '<button type="button" class="quick go" data-act="approve" data-row="' + r.row + '">Approve</button>');
+          : '<button type="button" class="quick go" data-act="approve" data-row="' + r.row + '">Approve</button>';
+      } else if(canRequeue(r)){
+        /* The only way out of a claim the automation abandoned. */
+        quick = '<button type="button" class="quick warn" data-act="requeue" data-row="' + r.row + '">Requeue</button>';
+      }
 
       return '<div class="rowcard" style="--d:' + (i * 35) + 'ms" data-row="' + r.row + '" role="button" tabindex="0">' +
         thumb +
@@ -713,6 +819,7 @@
     call({ action:'list' })
       .then(function(res){
         rows = res.rows || [];
+        dropped = res.dropped || 0;
         renderList();
       })
       .catch(function(err){
@@ -751,9 +858,30 @@
     var q = e.target.closest('.quick');
     if(q){
       e.stopPropagation();
-      setStatus(Number(q.getAttribute('data-row')),
-                q.getAttribute('data-act') === 'approve' ? 'Publish' : 'For review',
-                q.closest('.rowcard')).catch(function(){});
+      var row = Number(q.getAttribute('data-row'));
+      var act = q.getAttribute('data-act');
+      var card = q.closest('.rowcard');
+
+      if(act === 'requeue'){
+        var known = rows.filter(function(x){ return x.row === row; })[0];
+        /* Two different warnings, because they carry different risk: one row is
+           provably abandoned, the other we simply cannot date. */
+        var warning = known && isStuck(known)
+          ? 'Row ' + row + ' was claimed over ' + STUCK_MINUTES + ' minutes ago and never finished.\n\n' +
+            'Requeue it so the automation tries again?'
+          : 'Row ' + row + ' has no claim time recorded, so there is no way to tell ' +
+            'whether it is stranded or still publishing right now.\n\n' +
+            'Requeue anyway? If it IS still running, this posts it twice.\n\n' +
+            'Check the n8n executions first if you are not sure.';
+        if(!confirm(warning)) return;
+        card.classList.add('busy');
+        call({ action:'requeue', row:row })
+          .then(function(){ toast('Row ' + row + ' requeued — it will be picked up on the next sweep.'); load(); })
+          .catch(function(err){ card.classList.remove('busy'); toast(err.message, true); });
+        return;
+      }
+
+      setStatus(row, act === 'approve' ? 'Publish' : 'For review', card).catch(function(){});
       return;
     }
     var card = e.target.closest('.rowcard');
@@ -817,7 +945,12 @@
       date: when.date,
       time: when.time,
       hadSchedule: !!r.scheduledAt,
-      readOnly: st === 'done' || st === 'failed',
+      /* What the sheet said when this drawer opened. Sent back with a delete so
+         the server can refuse if the row moved underneath us. */
+      origCaption: String(r.caption || ''),
+      origDriveUrl: String(r.driveUrl || ''),
+      state: st,
+      readOnly: st === 'done' || st === 'failed' || st === 'working',
       badge: badgeFor(r),
       status: r.status,
       result: r.result || ''
@@ -980,7 +1113,10 @@
 
     renderWhenNote();
     $('dSave').disabled = ro || !dirty();
-    $('dFoot').hidden = ro;      // nothing on a handled row is actionable
+    /* A handled row cannot be edited or approved, but it can still be removed
+       from the sheet — so the footer stays, and only the two write actions go. */
+    $('dSave').hidden = ro;
+    $('dApprove').hidden = ro;
     $('dApprove').textContent = draft.status === 'Publish' ? 'Put on hold' : 'Approve';
     wireDrawer();
   }
@@ -1099,9 +1235,15 @@
 
     var room = MAX_MEDIA - draft.media.length;
     var rejected = [];
+    var running = draftBytes();
     files.slice(0, room).forEach(function(f){
       if(!/^(image|video)\//.test(f.type)){ rejected.push(f.name + ' is not an image or video'); return; }
       if(f.size > MAX_UPLOAD_BYTES){ rejected.push(f.name + ' is ' + prettyBytes(f.size)); return; }
+      if(running + f.size > MAX_TOTAL_BYTES){
+        rejected.push(f.name + ' would take this past ' + MAX_TOTAL_MB + ' MB in total');
+        return;
+      }
+      running += f.size;
       var url = URL.createObjectURL(f);
       objectUrls.push(url);
       draft.media.push({ kind:'file', blob:f, name:f.name, mimeType:f.type, size:f.size, objectUrl:url });
@@ -1118,6 +1260,13 @@
     if(!draft.caption.trim()){ toast('The caption cannot be empty.', true); return; }
     if(!draft.platforms.length){ toast('Pick at least one platform.', true); return; }
     if(!draft.media.length){ toast('A post needs at least one image or video.', true); return; }
+    if(draftBytes() > MAX_TOTAL_BYTES){
+      toast('That is ' + prettyBytes(draftBytes()) + ' of uploads — the limit is ' +
+            MAX_TOTAL_MB + ' MB per post.', true);
+      return;
+    }
+    var ytErr = youtubeMediaProblem(draft.media, draft.platforms);
+    if(ytErr){ toast(ytErr, true); return; }
     var iso = isoFrom(draft.date, draft.time);
     if(!iso){ toast('Pick a valid date and time.', true); return; }
 
@@ -1170,6 +1319,45 @@
     setStatus(draft.row, to, null)
       .then(function(){ closeDrawer(true); })
       .catch(function(){ btn.disabled = false; });
+  });
+
+  /* ---- delete ---------------------------------------------------------
+     Irreversible, and it renumbers every row underneath — so it warns in the
+     terms that actually matter for each kind of row, and the reply always
+     forces a reload, because every row number the page is holding just moved.
+     -------------------------------------------------------------------- */
+  $('dDelete').addEventListener('click', function(){
+    if(!draft) return;
+    var row = draft.row;
+    var what = draft.origCaption.trim().slice(0, 60) || '(no caption)';
+
+    var warning = 'Delete row ' + row + ' from the sheet?\n\n“' + what + '”\n\n';
+    if(draft.state === 'done'){
+      warning += 'This post has ALREADY been published. Deleting the row removes your ' +
+                 'record of it — it does NOT take the post down from the platform.\n\n';
+    } else if(draft.state === 'working'){
+      warning += 'The automation is holding this row. ';
+    }
+    warning += 'This cannot be undone.';
+    if(!confirm(warning)) return;
+
+    var btn = $('dDelete');
+    btn.disabled = true;
+    call({
+      action:'delete',
+      row: row,
+      /* the server refuses if this no longer matches what is in the sheet */
+      expect: { caption: draft.origCaption, driveUrl: draft.origDriveUrl }
+    })
+      .then(function(){
+        toast('Row ' + row + ' deleted.');
+        closeDrawer(true);
+        load();          // every row number below this one just changed
+      })
+      .catch(function(err){
+        btn.disabled = false;
+        toast(err.message, true);
+      });
   });
 
   $('dClose').addEventListener('click', function(){ closeDrawer(); });

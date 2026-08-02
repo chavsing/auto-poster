@@ -909,6 +909,10 @@
      n8n never needs to know which was which.
      ------------------------------------------------------------------ */
   var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+  /* Per post, across every uploaded file. Must match MAX_TOTAL_UPLOAD_MB in
+     AppsScript.gs, which enforces the same thing server-side. */
+  var MAX_TOTAL_MB    = 30;
+  var MAX_TOTAL_BYTES = MAX_TOTAL_MB * 1024 * 1024;
   var MAX_MEDIA = 10;                    // Instagram/LinkedIn carousel ceiling
   var RATIOS = [
     { id:'orig', name:'Original', v:null },
@@ -1089,6 +1093,14 @@
     });
   }
 
+  /* Bytes actually being uploaded. Drive links cost nothing — the automation
+     fetches those itself, they never travel through this request. */
+  function totalBytes(){
+    return media.reduce(function(n, m){
+      return n + (m.kind === 'file' ? (m.size || 0) : 0);
+    }, 0);
+  }
+
   function applyBlob(m, blob){
     if(m.objectUrl) URL.revokeObjectURL(m.objectUrl);
     m.blob = blob;
@@ -1110,6 +1122,14 @@
         applyBlob(m, blob);
       });
     }))
+      .then(function(){
+        /* Cropping re-encodes, and a PNG can come out bigger than it went in,
+           so the set has to be re-checked after the fact and not just on add. */
+        if(totalBytes() > MAX_TOTAL_BYTES){
+          throw new Error('That crop pushes the upload to ' + prettyBytes(totalBytes()) +
+                          ' — the limit is ' + MAX_TOTAL_MB + ' MB per post.');
+        }
+      })
       .then(function(){ $('fileErr').classList.remove('show'); renderMedia(); })
       .catch(function(err){
         ratioId = 'orig';                 // back out of a crop we cannot honour
@@ -1129,10 +1149,19 @@
       return;
     }
     var rejected = [];
+    var running = totalBytes();
     files.slice(0, room).forEach(function(f){
       var isVideo = /^video\//.test(f.type), isImage = /^image\//.test(f.type);
       if(!isVideo && !isImage){ rejected.push(f.name + ' is not an image or video'); return; }
       if(f.size > MAX_UPLOAD_BYTES){ rejected.push(f.name + ' is ' + prettyBytes(f.size)); return; }
+      /* The set has to fit in one request, not just each file on its own —
+         uploads go base64-encoded, which adds a third, and the endpoint
+         refuses anything much past 50 MB. */
+      if(running + f.size > MAX_TOTAL_BYTES){
+        rejected.push(f.name + ' would take this past ' + MAX_TOTAL_MB + ' MB in total');
+        return;
+      }
+      running += f.size;
       media.push({
         kind:'file', src:f, blob:f, name:f.name, mimeType:f.type, size:f.size,
         objectUrl:URL.createObjectURL(f), isVideo:isVideo, isGif:f.type === 'image/gif'
@@ -1576,6 +1605,27 @@
   }
 
   /* ---- validation: errors near the field, focus the first bad one ---- */
+  /* '' when YouTube is fine (or not selected), otherwise why it is not.
+     Uploads carry a MIME type so we know; Drive links do not, so a link is
+     never blocked — better a rare platform-side failure than refusing a video
+     we simply could not identify. */
+  function youtubeMediaProblem(){
+    if(selected().indexOf('youtube') === -1 || !media.length) return '';
+
+    var files = media.filter(function(m){ return m.kind === 'file'; });
+    var knownVideo = files.some(function(m){ return m.isVideo; });
+    if(knownVideo) return '';
+
+    var allKnownImages = files.length === media.length &&
+                         files.every(function(m){ return !m.isVideo; });
+    if(allKnownImages){
+      return media.length === 1
+        ? 'YouTube needs a video — that is an image. Untick YouTube, or swap the file.'
+        : 'YouTube needs a video and these are all images. Untick YouTube, or add the video.';
+    }
+    return '';    // Drive links: unknowable here, let it through
+  }
+
   function validate(){
     var first = null;
     var url = $('drive').value.trim();
@@ -1586,9 +1636,26 @@
       var msg = 'Add at least one image or video.';
       if(mode === 'upload'){ $('fileErr').textContent = msg; $('fileErr').classList.add('show'); first = first || $('drop'); }
       else { $('driveErr').textContent = msg; $('driveErr').classList.add('show'); first = first || $('drive'); }
+    } else if(totalBytes() > MAX_TOTAL_BYTES){
+      $('fileErr').textContent = 'That is ' + prettyBytes(totalBytes()) + ' of uploads — the limit is ' +
+                                 MAX_TOTAL_MB + ' MB per post. Remove a file, or use Drive links instead.';
+      $('fileErr').classList.add('show');
+      first = first || $('drop');
     } else {
       $('fileErr').classList.remove('show');
       $('driveErr').classList.remove('show');
+    }
+
+    /* YouTube takes a video and nothing else. An image set sails through every
+       other check and then fails at the platform, minutes later, with an error
+       nobody sees — so refuse it here while it is still one click to fix.
+       Only blocked when we can PROVE it: an uploaded file has a real MIME type,
+       a Drive link does not, so links get the benefit of the doubt. */
+    var ytErr = youtubeMediaProblem();
+    if(ytErr){
+      $('platErr').textContent = ytErr;
+      $('platErr').classList.add('show');
+      first = first || $('ddTrigger');
     }
 
     /* An over-limit caption can't be published to that network at all — the
@@ -1610,6 +1677,9 @@
       $('capErr').classList.remove('show');
     }
     if(!selected().length){
+      /* Set the text explicitly — this element is shared with the YouTube
+         check above, so whatever ran last must own what it says. */
+      $('platErr').textContent = 'Select at least one platform.';
       $('platErr').classList.add('show');
       first = first || $('ddTrigger');
     }
