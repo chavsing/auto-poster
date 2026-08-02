@@ -838,6 +838,9 @@
     { id:'all',      name:'All' }
   ];
   var rows = [], filter = 'review', dropped = 0;
+  /* Who is signed in. The server stamps this as the approver, so the list can
+     show it straight away instead of re-reading the sheet to find out. */
+  var myEmail = '';
 
   function renderFilters(){
     $('filters').innerHTML = FILTERS.map(function(f){
@@ -934,6 +937,27 @@
     });
   }
 
+  /* ---- keeping the list in step without re-fetching ------------------
+     Every action here changes exactly one row in a way we already know the
+     outcome of, so the list is updated in place. Re-reading the whole sheet
+     to learn something we just did is slow and makes the list flicker.
+     -------------------------------------------------------------------- */
+  function patchRow(row, fields){
+    var r = rows.filter(function(x){ return x.row === row; })[0];
+    if(r){ for(var k in fields){ if(fields[k] !== undefined) r[k] = fields[k]; } }
+    renderList();
+  }
+
+  /* Deleting shifts every row below it up by one — the same thing the sheet
+     just did. Mirror it exactly, or the next click acts on the wrong row. */
+  function dropRow(row){
+    rows = rows.filter(function(x){ return x.row !== row; });
+    rows.forEach(function(x){ if(x.row > row) x.row -= 1; });
+    /* With rows withheld we do not know what should surface in its place, so
+       that is the one case worth a real re-read. */
+    if(dropped > 0) load(); else renderList();
+  }
+
   function load(){
     $('list').innerHTML = '<div class="empty">Loading…</div>';
     call({ action:'list' })
@@ -965,7 +989,9 @@
         toast(to === 'Publish'
           ? 'Row ' + row + ' approved — it publishes at its scheduled time.'
           : 'Row ' + row + ' put back on hold.');
-        load();
+        if(card) card.classList.remove('busy');
+        /* the server stamps the approver's address too, so mirror that */
+        patchRow(row, { status: to, approvedBy: to === 'Publish' ? myEmail : '' });
       })
       .catch(function(err){
         if(card) card.classList.remove('busy');
@@ -996,7 +1022,11 @@
         if(!confirm(warning)) return;
         card.classList.add('busy');
         call({ action:'requeue', row:row })
-          .then(function(){ toast('Row ' + row + ' requeued — it will be picked up on the next sweep.'); load(); })
+          .then(function(){
+            toast('Row ' + row + ' requeued — it will be picked up on the next sweep.');
+            card.classList.remove('busy');
+            patchRow(row, { postStatus:'queued', processedAt:'', result:'' });
+          })
           .catch(function(err){ card.classList.remove('busy'); toast(err.message, true); });
         return;
       }
@@ -1631,10 +1661,15 @@
       } else {
         toast('Row ' + draft.row + ' saved.');
       }
-      var row = draft.row;
+      /* Everything written is already known here, except the media URLs —
+         uploads only become Drive links server-side, so those come back. */
+      patchRow(draft.row, {
+        caption: draft.caption,
+        platforms: draft.platforms.slice(),
+        scheduledAt: iso,
+        driveUrl: res.driveUrl || undefined
+      });
       closeDrawer(true);
-      load();
-      return row;
     })
     .catch(function(err){
       btn.textContent = 'Save changes';
@@ -1690,11 +1725,14 @@
       .then(function(){
         toast('Row ' + row + ' deleted.');
         closeDrawer(true);
-        load();          // every row number below this one just changed
+        dropRow(row);          // every row number below this one just changed
       })
       .catch(function(err){
         btn.disabled = false;
         toast(err.message, true);
+        /* The server refused because the sheet no longer matches what we are
+           showing, so our copy is the thing that is wrong. Re-read it. */
+        if(/sheet changed/i.test(err.message)) load();
       });
   });
 
@@ -1726,7 +1764,8 @@
   function showApp(email){
     $('authGate').hidden = true;
     $('app').hidden = false;
-    $('whoEmail').textContent = email || '';
+    myEmail = email || '';
+    $('whoEmail').textContent = myEmail;
   }
 
   /* A fresh token per request. supabase-js refreshes in the background, so

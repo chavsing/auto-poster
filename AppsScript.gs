@@ -126,7 +126,7 @@ var MAX_UPLOAD_MB = 20;
 /* Bump this whenever you change this file. Opening the /exec URL in a browser
    shows the version that is actually LIVE — which is the deployed one, not the
    one in the editor. If it doesn't match, the deployment wasn't updated. */
-var VERSION = '11-delete-fix';
+var VERSION = '12-no-refetch';
 
 /* Ceiling on a caption edited from the review page. Well above every network's
    own limit (Facebook's 63,206 is the largest) but far below the 50,000-char
@@ -691,6 +691,10 @@ function updateRow(body) {
   var sheet = t.sheet, row = t.row, headers = t.headers;
 
   var writes = [];   // [colIndex, value] — collected first so a bad field writes nothing
+  /* Uploads only become Drive URLs here, so the page cannot know what it ended
+     up with. Handing it back lets the queue update itself instead of
+     re-fetching every row to learn one of them. */
+  var savedDriveUrl = null;
 
   if (body.caption !== undefined) {
     var caption = String(body.caption);
@@ -739,7 +743,8 @@ function updateRow(body) {
 
     var cDrive = colIndex(headers, FIELD_ALIASES.driveUrl);
     if (cDrive < 0) return { ok: false, error: 'No media column in this sheet.' };
-    writes.push([cDrive, resolved.urls.join(', ')]);
+    savedDriveUrl = resolved.urls.join(', ');
+    writes.push([cDrive, savedDriveUrl]);
 
     var cId = colIndex(headers, FIELD_ALIASES.driveFileId);
     if (cId > -1) writes.push([cId, resolved.ids.join(', ')]);
@@ -764,7 +769,7 @@ function updateRow(body) {
     scheduleStored = writeSchedule(sheet, headers, row, body.scheduledAt);
   }
 
-  return { ok: true, row: row, scheduleStored: scheduleStored };
+  return { ok: true, row: row, scheduleStored: scheduleStored, driveUrl: savedDriveUrl };
 }
 
 /** Pull the file id out of a Drive URL, so the File ID column still fills. */
