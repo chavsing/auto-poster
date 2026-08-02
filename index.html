@@ -1847,7 +1847,7 @@
           body:JSON.stringify(payload)
         });
       })
-      .then(function(r){ return r.json(); })
+      .then(readJson)
       .then(function(res){
         checkSignedOut(res);
         if(!res || !res.ok) throw new Error(res && res.error ? res.error : 'The sheet rejected the submission.');
@@ -1936,6 +1936,32 @@
       var s = r.data && r.data.session;
       if(!s){ showGate('Your session ended. Sign in again.'); throw new Error('Signed out.'); }
       return s.access_token;
+    });
+  }
+
+  /* Apps Script answers with an HTML page whenever something fails OUTSIDE our
+     code — a broken deployment, a script timeout, a Google-side error. Handing
+     that to JSON.parse produces «Unexpected token '<'», which says nothing
+     about what went wrong or where to look. Read it as text first, and turn
+     the few recognisable pages into something actionable. */
+  function readJson(r){
+    return r.text().then(function(text){
+      try { return JSON.parse(text); } catch(e){}
+
+      console.error('AutoPost: endpoint returned non-JSON. HTTP ' + r.status + '\n' + text);
+      if(/accounts\.google\.com|ServiceLogin|signin/i.test(text)){
+        throw new Error('The endpoint is asking for a Google sign-in. In Apps Script set ' +
+                        'Deploy > Manage deployments > Who has access: Anyone, then redeploy.');
+      }
+      if(/quota|rate limit|too many/i.test(text)){
+        throw new Error('Google is rate-limiting the script. Wait a minute and try again.');
+      }
+      if(/exceeded maximum execution time|timed? ?out/i.test(text)){
+        throw new Error('The script ran out of time. Try again — if it keeps happening, the sheet may be very large.');
+      }
+      throw new Error('The Apps Script returned an error page instead of a result (HTTP ' + r.status +
+                      '). Open the Apps Script editor > Executions to see the actual error. ' +
+                      'The full page is in this browser console.');
     });
   }
 
