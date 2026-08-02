@@ -245,6 +245,96 @@
   .dfoot .btn.danger:hover{background:rgba(255,95,112,.22);border-color:rgba(255,95,112,.6);filter:none}
   .dfoot .btn.danger svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 
+  /* ==========================================================
+     POST PREVIEW — the same rendering the composer shows, so
+     reviewing and composing agree on what the post looks like.
+     On a light surface deliberately: it should read as "this is
+     the post", not as more of the app's chrome.
+     ========================================================== */
+  .dtabs{display:flex;gap:6px;padding:14px 18px 0}
+  .dtab{
+    flex:1;padding:9px 12px;min-height:38px;border-radius:11px;cursor:pointer;
+    font:inherit;font-size:13px;font-weight:650;
+    background:var(--surface);border:1px solid var(--stroke);color:var(--muted);
+    transition:color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out);
+  }
+  .dtab:hover{color:var(--text);border-color:var(--stroke-2)}
+  .dtab.on{color:var(--text);background:rgba(109,94,252,.16);border-color:rgba(109,94,252,.46)}
+
+  .pv-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+  .pv-tab{
+    display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+    background:var(--surface);border:1px solid var(--stroke);color:var(--muted);
+    font:inherit;font-size:12px;font-weight:640;padding:7px 12px;border-radius:999px;
+    transition:color var(--t-fast) var(--ease-out),border-color var(--t-fast) var(--ease-out),background var(--t-fast) var(--ease-out);
+  }
+  .pv-tab:hover{border-color:var(--stroke-2);color:var(--text)}
+  .pv-tab.on{background:rgba(255,255,255,.11);border-color:var(--stroke-2);color:var(--text)}
+  .pv-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+
+  .pv-card{
+    overflow:hidden;background:#fff;color:#1c1e21;border-radius:14px;
+    box-shadow:0 24px 60px -24px rgba(0,0,0,.85);
+    font-size:14px;line-height:1.45;animation:rise .34s var(--ease-out);
+  }
+  .pv-top{display:flex;align-items:center;gap:10px;padding:13px 15px 10px}
+  .pv-avatar{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto}
+  .pv-avatar svg{width:19px;height:19px;fill:#fff}
+  .pv-name{display:block;font-weight:650;font-size:14px;color:#1c1e21}
+  .pv-time{display:block;font-size:12px;color:#65676b;font-variant-numeric:tabular-nums}
+  .pv-text{padding:2px 15px 12px;white-space:pre-wrap;word-break:break-word}
+  .pv-link{color:#1877F2}
+  .pv-more{color:#65676b}
+  .pv-media{position:relative;width:100%;background:#e4e6eb;overflow:hidden}
+  .pv-media-msg{
+    position:absolute;inset:0;display:none;place-items:center;text-align:center;
+    padding:20px;font-size:12.5px;color:#65676b;line-height:1.5;
+  }
+  .pv-media.is-empty .pv-media-msg{display:grid}
+
+  /* Facebook, X and LinkedIn collage several images into one post; Instagram
+     shows them one at a time. Both are built from the same tiles. */
+  .pv-grid{position:absolute;inset:0;display:grid;gap:2px}
+  .pv-grid.g1{grid-template-columns:1fr}
+  .pv-grid.g2{grid-template-columns:1fr 1fr}
+  .pv-grid.g3{grid-template-columns:2fr 1fr;grid-template-rows:1fr 1fr}
+  .pv-grid.g3 .pv-tile:first-child{grid-row:span 2}
+  .pv-grid.g4{grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}
+  .pv-tile{position:relative;display:block;overflow:hidden;background:#d8dadf}
+  .pv-tile img,.pv-tile video{width:100%;height:100%;object-fit:cover;display:block}
+  .pv-tile.is-loading img,.pv-tile.is-fail img{display:none}
+  .pv-tile-msg{
+    position:absolute;inset:0;display:none;place-items:center;text-align:center;
+    padding:10px;font-size:11.5px;color:#65676b;line-height:1.4;
+  }
+  .pv-tile.is-loading .pv-tile-msg,.pv-tile.is-fail .pv-tile-msg{display:grid}
+  .pv-more-count{position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.55);color:#fff;font-size:26px;font-weight:700}
+  .pv-count{
+    position:absolute;top:10px;right:10px;z-index:2;
+    background:rgba(0,0,0,.6);color:#fff;font-size:11.5px;font-weight:650;
+    padding:3px 9px;border-radius:999px;font-variant-numeric:tabular-nums;
+  }
+  .pv-dots{position:absolute;left:0;right:0;bottom:9px;z-index:2;display:flex;justify-content:center;gap:5px}
+  /* deliberately NOT .pv-dot — that class is the platform tab's colour dot */
+  .pv-cdot{
+    width:7px;height:7px;border-radius:50%;border:0;padding:0;cursor:pointer;
+    background:rgba(255,255,255,.55);box-shadow:0 1px 3px rgba(0,0,0,.45);
+    transition:background var(--t-fast) var(--ease-out),transform var(--t-fast) var(--ease-out);
+  }
+  .pv-cdot.on{background:#fff;transform:scale(1.25)}
+  .pv-actions{display:flex;gap:18px;padding:10px 15px;border-top:1px solid #e4e6eb;font-size:12.5px;font-weight:600;color:#65676b}
+
+  /* youtube reads as an upload, not a feed post */
+  .pv-card.pv-yt{background:#0f0f0f;color:#f1f1f1}
+  .pv-yt .pv-media{background:#272727}
+  .pv-yt-meta{padding:13px 15px 4px}
+  .pv-yt-title{font-size:15.5px;font-weight:650;line-height:1.3}
+  .pv-yt-sub{font-size:12.5px;color:#aaa;margin-top:5px}
+  .pv-yt .pv-text{color:#d0d0d0;font-size:13px;padding-top:8px}
+  .pv-yt .pv-actions{border-top-color:#272727;color:#aaa}
+  .pv-note{font-size:12px;color:var(--muted);margin:12px 0 0;min-height:1.2em;text-align:center}
+  .pv-note.warn{color:#ffca7a}
+
   .fld{margin-bottom:22px}
   .fld:last-child{margin-bottom:4px}
   .lab{
@@ -491,6 +581,10 @@
     <h2 id="dTitle">Post<span class="sub" id="dSub"></span></h2>
     <span class="badge" id="dBadge"></span>
     <button class="x" type="button" id="dClose" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
+  </div>
+  <div class="dtabs" role="tablist">
+    <button type="button" class="dtab on" id="tabPreview" role="tab" aria-selected="true">Preview</button>
+    <button type="button" class="dtab" id="tabEdit" role="tab" aria-selected="false">Edit</button>
   </div>
   <div class="dbody" id="dBody"></div>
   <div class="dfoot" id="dFoot">
@@ -902,6 +996,9 @@
   var draft = null;      // { row, caption, platforms, media[], date, time, readOnly }
   var pristine = '';     // snapshot to detect real changes
   var slide = 0;
+  /* Opens on the preview: the first question when you click a row is "what
+     does this post look like", not "what fields does it have". */
+  var drawerTab = 'preview';
   var lastFocus = null;
 
   function snapshot(d){
@@ -957,6 +1054,9 @@
     };
     pristine = snapshot(draft);
     slide = 0;
+    pvSlide = 0;
+    pvActive = null;
+    drawerTab = 'preview';
 
     lastFocus = document.activeElement;
     $('scrim').hidden = false;
@@ -1050,11 +1150,206 @@
       ' — those will be skipped, the rest still publish.</p>';
   }
 
+  /* ==================================================================
+     POST PREVIEW
+     The same rules the composer uses, so the two agree: each network
+     truncates captions at a different point and stacks media
+     differently. The numbers below are where each collapses text
+     behind a "see more", not the hard character caps.
+     ================================================================== */
+  var PV = {
+    facebook: { soft:477, ratio:'16 / 9', below:false, more:'See more',  who:'Your Page',  acts:['Like','Comment','Share'],            layout:'grid' },
+    instagram:{ soft:125, ratio:'1 / 1',  below:true,  more:'more',      who:'yourhandle', acts:['Like','Comment','Send'],             layout:'carousel' },
+    twitter:  { soft:280, ratio:'16 / 9', below:false, more:'Show more', who:'@yourhandle',acts:['Reply','Repost','Like'],            layout:'grid' },
+    linkedin: { soft:210, ratio:'16 / 9', below:false, more:'see more',  who:'Your Page',  acts:['Like','Comment','Repost','Send'],   layout:'grid' }
+  };
+  var pvActive = null, pvSlide = 0;
+
+  function pvEsc(s){
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  /* hashtags, mentions and links get the accent colour real posts give them */
+  function pvRich(s){
+    return pvEsc(s)
+      .replace(/(https?:\/\/[^\s<]+)/g, '<span class="pv-link">$1</span>')
+      .replace(/(^|\s)(#[\wÀ-ɏ]+)/g, '$1<span class="pv-link">$2</span>')
+      .replace(/(^|\s)(@[\w.]+)/g, '$1<span class="pv-link">$2</span>');
+  }
+  /* cut on a word boundary so the ellipsis doesn't land mid-word */
+  function pvCut(text, limit){
+    if(text.length <= limit) return { text:text, cut:false };
+    return { text:text.slice(0, limit).replace(/\s+\S*$/, ''), cut:true };
+  }
+
+  /* One cell. An upload already has its src; a Drive link gets one from
+     pvLoad() once listeners exist — setting it inside innerHTML lets the
+     request finish or fail before anything is listening, which silently
+     leaves a blank box. */
+  function pvTile(m, overlay){
+    var extra = overlay || '';
+    if(m.kind === 'file'){
+      var inner = /^video\//.test(m.mimeType)
+        ? '<video src="' + pvEsc(m.objectUrl) + '" muted playsinline preload="metadata"></video>'
+        : '<img alt="" src="' + pvEsc(m.objectUrl) + '" />';
+      return '<span class="pv-tile">' + inner + extra + '</span>';
+    }
+    if(!m.fileId){
+      return '<span class="pv-tile is-fail"><span class="pv-tile-msg">Not a Drive file.</span>' + extra + '</span>';
+    }
+    return '<span class="pv-tile is-loading" data-id="' + pvEsc(m.fileId) + '">' +
+             '<img alt="" referrerpolicy="no-referrer" />' +
+             '<span class="pv-tile-msg">Loading…</span>' + extra +
+           '</span>';
+  }
+
+  function pvMedia(ratio, layout){
+    var list = draft.media;
+    if(!list.length){
+      return '<div class="pv-media is-empty" style="aspect-ratio:' + ratio + '">' +
+               '<span class="pv-media-msg">This post has no media.</span></div>';
+    }
+    if(pvSlide >= list.length) pvSlide = 0;
+
+    var body;
+    if(list.length === 1){
+      body = '<span class="pv-grid g1">' + pvTile(list[0]) + '</span>';
+    } else if(layout === 'grid'){
+      var shown = list.slice(0, 4), extra = list.length - shown.length;
+      body = '<span class="pv-grid g' + shown.length + '">' + shown.map(function(m, i){
+        /* the last tile carries a +N badge, exactly as Facebook does */
+        var ov = (extra > 0 && i === shown.length - 1)
+          ? '<span class="pv-more-count">+' + extra + '</span>' : '';
+        return pvTile(m, ov);
+      }).join('') + '</span>';
+    } else {
+      body = '<span class="pv-grid g1">' + pvTile(list[pvSlide]) + '</span>' +
+        '<span class="pv-count">' + (pvSlide + 1) + '/' + list.length + '</span>' +
+        '<span class="pv-dots">' + list.map(function(_, i){
+          return '<button type="button" class="pv-cdot' + (i === pvSlide ? ' on' : '') +
+                 '" data-slide="' + i + '" aria-label="Item ' + (i + 1) + '"></button>';
+        }).join('') + '</span>';
+    }
+    return '<div class="pv-media" style="aspect-ratio:' + ratio + '">' + body +
+             '<span class="pv-media-msg"></span></div>';
+  }
+
+  /* A dead thumbnail here is the same failure the automation would hit, so it
+     is worth surfacing now rather than in a failed row later. */
+  function pvLoad(){
+    var tiles = $('dBody').querySelectorAll('.pv-tile[data-id]');
+    if(!tiles.length) return;
+    var note = $('dBody').querySelector('.pv-note');
+
+    [].forEach.call(tiles, function(box){
+      var id = box.getAttribute('data-id');
+      var img = box.querySelector('img');
+      var msg = box.querySelector('.pv-tile-msg');
+      var srcs = [
+        'https://drive.google.com/thumbnail?id=' + id + '&sz=w800',
+        'https://lh3.googleusercontent.com/d/' + id + '=w800'
+      ];
+      var i = 0;
+      img.addEventListener('load', function(){
+        if(!img.naturalWidth) return;          // some hosts 200 with an empty body
+        box.classList.remove('is-loading', 'is-fail');
+      });
+      img.addEventListener('error', function(){
+        if(i < srcs.length){ img.src = srcs[i++]; return; }   // try the other host
+        box.classList.remove('is-loading');
+        box.classList.add('is-fail');
+        msg.textContent = 'Could not load.';
+        if(note){
+          note.textContent = 'Some media could not be fetched. Check the files are shared “Anyone with the link” — the automation fetches them the same way.';
+          note.classList.add('warn');
+        }
+      });
+      img.src = srcs[i++];                     // listeners are attached first
+    });
+  }
+
+  function previewHtml(){
+    var sel = draft.platforms.slice();
+    var caption = draft.caption.trim();
+    if(!sel.length){
+      return '<div class="empty"><strong>No platform set</strong>' +
+             'There is nothing to preview until this post has somewhere to go. ' +
+             'Open <b>Edit</b> and pick at least one.</div>';
+    }
+    if(sel.indexOf(pvActive) === -1) pvActive = sel[0];
+
+    var tabs = '<div class="pv-tabs" role="tablist">' + sel.map(function(id){
+      var p = meta(id);
+      if(!p) return '';
+      return '<button type="button" class="pv-tab' + (id === pvActive ? ' on' : '') + '"' +
+             ' data-p="' + id + '" role="tab" aria-selected="' + (id === pvActive) + '">' +
+             '<span class="pv-dot" style="background:' + p.color + '"></span>' + esc(p.name) + '</button>';
+    }).join('') + '</div>';
+
+    var iso = isoFrom(draft.date, draft.time);
+    var d = iso ? new Date(iso) : null;
+    var stamp = d && !isNaN(d.getTime())
+      ? d.toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
+      : 'Not scheduled';
+
+    var p = meta(pvActive), card;
+
+    if(pvActive === 'youtube'){
+      /* mirrors what the automation sends: the title falls back to the
+         caption's first 95 characters */
+      var title = ((caption.replace(/\s+/g, ' ').trim()) || 'Untitled').slice(0, 95);
+      card = '<article class="pv-card pv-yt">' +
+               pvMedia('16 / 9', 'single') +
+               '<div class="pv-yt-meta">' +
+                 '<div class="pv-yt-title">' + pvEsc(title) + '</div>' +
+                 '<div class="pv-yt-sub">Your channel · ' + pvEsc(stamp) + '</div>' +
+               '</div>' +
+               '<div class="pv-text">' + (caption ? pvRich(caption) : '') + '</div>' +
+               '<footer class="pv-actions"><span>Like</span><span>Share</span><span>Save</span></footer>' +
+             '</article>';
+    } else {
+      var cfg = PV[pvActive];
+      var cut = pvCut(caption, cfg.soft);
+      var textHtml = '<div class="pv-text">' + (caption ? pvRich(cut.text) : '') +
+                     (cut.cut ? '<span class="pv-more"> … ' + cfg.more + '</span>' : '') + '</div>';
+      var mediaHtml = pvMedia(cfg.ratio, cfg.layout);
+      card = '<article class="pv-card">' +
+               '<header class="pv-top">' +
+                 '<span class="pv-avatar" style="background:' + p.color + '">' +
+                   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="' + p.path + '"/></svg></span>' +
+                 '<span><span class="pv-name">' + esc(cfg.who) + '</span>' +
+                 '<span class="pv-time">' + pvEsc(stamp) + '</span></span>' +
+               '</header>' +
+               (cfg.below ? mediaHtml + textHtml : textHtml + mediaHtml) +
+               '<footer class="pv-actions">' +
+                 cfg.acts.map(function(a){ return '<span>' + a + '</span>'; }).join('') +
+               '</footer>' +
+             '</article>';
+    }
+    return tabs + card + '<p class="pv-note"></p>';
+  }
+
   function renderDrawer(){
     var ro = draft.readOnly;
     $('dSub').textContent = 'Row ' + draft.row + (ro ? ' · already handled' : '');
     $('dBadge').className = 'badge ' + draft.badge.cls;
     $('dBadge').textContent = draft.badge.txt;
+
+    $('tabPreview').classList.toggle('on', drawerTab === 'preview');
+    $('tabEdit').classList.toggle('on', drawerTab === 'edit');
+    $('tabPreview').setAttribute('aria-selected', drawerTab === 'preview');
+    $('tabEdit').setAttribute('aria-selected', drawerTab === 'edit');
+
+    /* The footer means the same thing on both tabs, so it is decided once. */
+    $('dSave').disabled = ro || !dirty();
+    $('dSave').hidden = ro;
+    $('dApprove').hidden = ro;
+    $('dApprove').textContent = draft.status === 'Publish' ? 'Put on hold' : 'Approve';
+
+    if(drawerTab === 'preview'){
+      $('dBody').innerHTML = previewHtml();
+      pvLoad();
+      return;
+    }
 
     $('dBody').innerHTML =
       '<div class="fld">' +
@@ -1110,16 +1405,29 @@
 
     /* wired after the markup exists, so listeners land before src is set */
     loadDriveImgs($('dBody'));
-
     renderWhenNote();
-    $('dSave').disabled = ro || !dirty();
-    /* A handled row cannot be edited or approved, but it can still be removed
-       from the sheet — so the footer stays, and only the two write actions go. */
-    $('dSave').hidden = ro;
-    $('dApprove').hidden = ro;
-    $('dApprove').textContent = draft.status === 'Publish' ? 'Put on hold' : 'Approve';
     wireDrawer();
   }
+
+  /* Preview / Edit, and the platform tabs and carousel dots inside the
+     preview. Delegated, because the body is rebuilt on every render. */
+  $('tabPreview').addEventListener('click', function(){
+    if(!draft || drawerTab === 'preview') return;
+    drawerTab = 'preview';
+    renderDrawer();
+  });
+  $('tabEdit').addEventListener('click', function(){
+    if(!draft || drawerTab === 'edit') return;
+    drawerTab = 'edit';
+    renderDrawer();
+  });
+  $('dBody').addEventListener('click', function(e){
+    if(!draft || drawerTab !== 'preview') return;
+    var tab = e.target.closest('.pv-tab');
+    if(tab){ pvActive = tab.getAttribute('data-p'); renderDrawer(); return; }
+    var dot = e.target.closest('.pv-cdot');
+    if(dot){ pvSlide = Number(dot.getAttribute('data-slide')); renderDrawer(); }
+  });
 
   function renderWhenNote(){
     var el = $('whenNote');
