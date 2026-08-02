@@ -126,7 +126,7 @@ var MAX_UPLOAD_MB = 20;
 /* Bump this whenever you change this file. Opening the /exec URL in a browser
    shows the version that is actually LIVE — which is the deployed one, not the
    one in the editor. If it doesn't match, the deployment wasn't updated. */
-var VERSION = '8-hardening';
+var VERSION = '9-delete';
 
 /* Ceiling on a caption edited from the review page. Well above every network's
    own limit (Facebook's 63,206 is the largest) but far below the 50,000-char
