@@ -7,24 +7,23 @@
   },
   "nodes": [
     {
-      "id": "trigger-schedule",
-      "name": "Every minute",
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
+      "id": "trigger-webhook",
+      "name": "When AutoPost says a post is due",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [
         -1100,
         300
       ],
+      "webhookId": "autopost-sweep-hook",
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "minutes",
-              "minutesInterval": 1
-            }
-          ]
-        }
-      }
+        "httpMethod": "POST",
+        "path": "autopost-sweep",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "notes": "Called by the sweep() trigger in AppsScript.gs, only when a post is actually due. Replaces a per-minute Schedule Trigger, which counted an execution every firing (~43,800/month) whether or not it found work."
     },
     {
       "id": "config",
@@ -653,17 +652,6 @@
     }
   ],
   "connections": {
-    "Every minute": {
-      "main": [
-        [
-          {
-            "node": "Config",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Config": {
       "main": [
         [
@@ -913,6 +901,17 @@
         [
           {
             "node": "Build post payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When AutoPost says a post is due": {
+      "main": [
+        [
+          {
+            "node": "Config",
             "type": "main",
             "index": 0
           }

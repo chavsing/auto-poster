@@ -50,6 +50,34 @@ var SHARED_TOKEN = 'ap_5iLo88aF_oQ0NG-hh1JKxDUi';
 var SUPABASE_URL = 'https://fhwqqekzkfxipqnmmqju.supabase.co';          // e.g. https://abcdefgh.supabase.co   (no trailing slash)
 var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZod3FxZWt6a2Z4aXBxbm1tcWp1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU1OTQ1MjIsImV4cCI6MjEwMTE3MDUyMn0.f0P891eCLzH_zm6QzQEdiCIcFs_ycOrT22xNWsE4-Qc';          // the anon / publishable key
 
+/* ============================================================
+   n8n WEBHOOK  <-- FILL THESE IN
+   ============================================================
+   n8n bills per execution, and a Schedule Trigger counts every time it fires
+   "regardless of outcome". Once a minute is ~43,800 executions a month, which
+   burns a 2,500 plan in under two days — and almost every one of those finds
+   nothing to do.
+
+   So the clock moves here. A time-driven trigger in this script checks whether
+   anything is actually due and only then calls n8n. Apps Script triggers cost
+   nothing, so n8n runs about as often as you publish.
+
+   SECRET: whoever knows the URL can make your accounts post. n8n's Webhook
+   node supports Header Auth — create that credential in n8n with the same
+   header name and value below, and select it on the node.
+
+   Leave the URL blank and nothing is called; the sweep just does nothing. */
+var N8N_WEBHOOK_URL    = '';                 // https://<you>.app.n8n.cloud/webhook/autopost-sweep
+var N8N_WEBHOOK_HEADER = 'x-autopost-key';   // must match the Header Auth credential in n8n
+var N8N_WEBHOOK_SECRET = '';                 // must match it too
+
+/* Two things can ask n8n to run: the minute sweep, and approving a post that
+   is already due. Without a gap between calls both could fire at once and two
+   runs could read the same row before either claimed it. n8n marks a row
+   'processing' within a few seconds, so a short quiet period is enough for the
+   second call to find nothing left to do. */
+var PING_DEBOUNCE_SECONDS = 90;
+
 /* Daily ceilings, counted per UTC day. The endpoint is public and now writes
    files into Drive, so an unbounded one is an invitation to fill it. */
 var MAX_ROWS_PER_DAY    = 200;
@@ -126,7 +154,7 @@ var MAX_UPLOAD_MB = 20;
 /* Bump this whenever you change this file. Opening the /exec URL in a browser
    shows the version that is actually LIVE — which is the deployed one, not the
    one in the editor. If it doesn't match, the deployment wasn't updated. */
-var VERSION = '12-no-refetch';
+var VERSION = '13-webhook';
 
 /* Ceiling on a caption edited from the review page. Well above every network's
    own limit (Facebook's 63,206 is the largest) but far below the 50,000-char
@@ -299,6 +327,158 @@ function cellFor(header, body, platforms) {
   if (matches(header, FIELD_ALIASES.postStatus))  return QUEUED_STATUS;
 
   return '';   // unknown column: leave it alone
+}
+
+/* ============================================================
+   THE CLOCK — decides when n8n runs, so n8n stops running for nothing
+   ============================================================ */
+
+/**
+ * RUN THIS ONCE from the editor to start the schedule.
+ *   toolbar function dropdown > installSweep > Run
+ * Running it again is safe — it replaces the trigger rather than adding one.
+ */
+function installSweep() {
+  removeSweep();
+  ScriptApp.newTrigger('sweep').timeBased().everyMinutes(1).create();
+  Logger.log('Sweep installed: checks every minute, calls n8n only when a post is due.');
+}
+
+/** Stop the schedule. Nothing will publish until installSweep() runs again. */
+function removeSweep() {
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'sweep') ScriptApp.deleteTrigger(t);
+  });
+}
+
+/** Run from the editor to see what the sweep can see. Changes nothing. */
+function sweepStatus() {
+  var installed = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === 'sweep';
+  });
+  var due = dueRows();
+  Logger.log([
+    'trigger installed : ' + installed,
+    'webhook configured: ' + !!(N8N_WEBHOOK_URL && N8N_WEBHOOK_SECRET),
+    'last sweep        : ' + (PropertiesService.getScriptProperties().getProperty('lastSweepAt') || 'never'),
+    'due right now     : ' + (due.length ? due.join(', ') : 'nothing')
+  ].join('\n'));
+}
+
+/** Read a schedule cell the same three ways the sheet can hand one back. */
+function parseWhen(v) {
+  if (v === '' || v === null || v === undefined) return null;
+  if (v instanceof Date) return v;
+  if (typeof v === 'number') {                     // Sheets serial date
+    return new Date(Math.round((v - 25569) * 86400000));
+  }
+  var d = new Date(String(v).trim());
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Rows that would publish if n8n ran right now: approved, unclaimed, and due.
+ *
+ * Deliberately the same test n8n applies, so a sweep that says "nothing" means
+ * a run really would have found nothing. An unreadable date counts as due, so
+ * n8n gets the chance to report it as an error rather than it sitting silent.
+ */
+function dueRows() {
+  var sheet = openSheet();
+  if (!sheet) return [];
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var values = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+  var headers = values[0].map(function (h) { return String(h).trim().toLowerCase(); });
+
+  var cStatus = colIndex(headers, FIELD_ALIASES.status);
+  var cPost   = colIndex(headers, FIELD_ALIASES.postStatus);
+  var cWhen   = colIndex(headers, FIELD_ALIASES.scheduledAt);
+  if (cStatus < 0) return [];
+
+  var now = new Date().getTime(), out = [];
+  for (var r = 2; r <= lastRow; r++) {
+    var v = values[r - 1];
+    if (String(v[cStatus]).trim().toLowerCase() !== PUBLISH_STATUS.toLowerCase()) continue;
+
+    var ps = cPost > -1 ? String(v[cPost]).trim().toLowerCase() : '';
+    if (ps && ps !== QUEUED_STATUS) continue;          // claimed or finished
+
+    if (cWhen > -1) {
+      var raw = v[cWhen];
+      var has = raw !== '' && raw !== null && raw !== undefined;
+      if (has) {
+        var at = parseWhen(raw);
+        if (at && at.getTime() > now) continue;        // not yet
+      }
+    }
+    out.push(r);
+  }
+  return out;
+}
+
+/**
+ * Ask n8n to run. '' when it went, otherwise why it did not.
+ *
+ * Debounced: two callers can decide work exists at almost the same moment, and
+ * a second run reading the same unclaimed rows would publish them twice.
+ */
+function pingN8n(reason, rows) {
+  if (!N8N_WEBHOOK_URL || !N8N_WEBHOOK_SECRET) return 'n8n webhook is not configured.';
+
+  var cache = CacheService.getScriptCache();
+  if (cache.get('n8nPing')) return 'skipped — n8n was called moments ago.';
+  cache.put('n8nPing', '1', PING_DEBOUNCE_SECONDS);
+
+  var headers = {};
+  headers[N8N_WEBHOOK_HEADER] = N8N_WEBHOOK_SECRET;
+
+  try {
+    var res = UrlFetchApp.fetch(N8N_WEBHOOK_URL, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: headers,
+      /* n8n does not need these — it re-reads the sheet itself — but they make
+         an execution traceable back to why it started. */
+      payload: JSON.stringify({ reason: reason, rows: rows || [], at: new Date().toISOString() }),
+      muteHttpExceptions: true
+    });
+    var code = res.getResponseCode();
+    if (code >= 200 && code < 300) return '';
+
+    /* Let the next sweep try again rather than sitting out the debounce. */
+    cache.remove('n8nPing');
+    return 'n8n returned HTTP ' + code + '. ' +
+           (code === 403 || code === 401 ? 'Check the header auth matches.' : '') ;
+  } catch (err) {
+    cache.remove('n8nPing');
+    return 'Could not reach n8n: ' + String(err && err.message || err);
+  }
+}
+
+/**
+ * The trigger target. Runs every minute, costs n8n nothing unless there is
+ * something to publish.
+ *
+ * NOTE: this script is now the only thing that starts a publish. If the
+ * trigger is deleted or the project loses authorization, nothing publishes and
+ * nothing says so — which is what `lastSweepAt` in doGet is for.
+ */
+function sweep() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) return;        // a submission or another sweep holds it; next minute will do
+  try {
+    PropertiesService.getScriptProperties().setProperty('lastSweepAt', new Date().toISOString());
+    var rows = dueRows();
+    if (!rows.length) return;             // the whole point: no n8n execution
+    var problem = pingN8n('due', rows);
+    if (problem) Logger.log('sweep: ' + problem);
+  } finally {
+    try { lock.releaseLock(); } catch (ignored) {}
+  }
 }
 
 /* ============================================================
@@ -675,7 +855,18 @@ function setRowStatus(body, user) {
     writeCell(t.sheet, t.row, by, status === PUBLISH_STATUS ? (user && user.email || '') : '', true);
   }
 
-  return { ok: true, row: t.row, status: status };
+  /* Approving something already past its time should go out now, not on the
+     next sweep. A future-dated post is left to the clock. */
+  var pinged = false;
+  if (status === PUBLISH_STATUS) {
+    var cWhen = colIndex(t.headers, FIELD_ALIASES.scheduledAt);
+    var at = cWhen > -1 ? parseWhen(t.sheet.getRange(t.row, cWhen + 1).getValue()) : null;
+    if (!at || at.getTime() <= new Date().getTime()) {
+      pinged = !pingN8n('approved', [t.row]);
+    }
+  }
+
+  return { ok: true, row: t.row, status: status, pinged: pinged };
 }
 
 /**
@@ -1019,6 +1210,11 @@ function doGet() {
     /* false means SUPABASE_URL / SUPABASE_KEY are still blank, and every POST
        is being refused. Check this first when the pages say you are signed out. */
     auth: !!(SUPABASE_URL && SUPABASE_KEY),
+    /* This script is now the only thing that starts a publish, so a stopped
+       trigger is silent. If `lastSweep` is not within the last few minutes,
+       nothing is publishing — run installSweep() from the editor. */
+    webhook: !!(N8N_WEBHOOK_URL && N8N_WEBHOOK_SECRET),
+    lastSweep: PropertiesService.getScriptProperties().getProperty('lastSweepAt') || null,
     uploads: true,
     ready: true
   });
