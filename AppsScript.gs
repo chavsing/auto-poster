@@ -62,14 +62,34 @@ var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSI
    anything is actually due and only then calls n8n. Apps Script triggers cost
    nothing, so n8n runs about as often as you publish.
 
-   SECRET: whoever knows the URL can make your accounts post. n8n's Webhook
-   node supports Header Auth — create that credential in n8n with the same
-   header name and value below, and select it on the node.
+   THE URL AND SECRET DO NOT LIVE IN THIS FILE. This repo is public, and both
+   halves together let a stranger fire your workflow — not to publish anything
+   of their own (the call carries no content, it only says "check the sheet"),
+   but to hammer it until your monthly execution quota is gone and nothing of
+   yours publishes at all.
 
-   Leave the URL blank and nothing is called; the sweep just does nothing. */
-var N8N_WEBHOOK_URL    = '';                 // https://<you>.app.n8n.cloud/webhook/autopost-sweep
-var N8N_WEBHOOK_HEADER = 'x-autopost-key';   // must match the Header Auth credential in n8n
-var N8N_WEBHOOK_SECRET = '';                 // must match it too
+   So they live in Script Properties, which is never in the repo and survives
+   pasting this file into the editor:
+
+     Apps Script editor > Project Settings (gear) > Script Properties > Add
+       n8nWebhookUrl     https://<you>.app.n8n.cloud/webhook/autopost-sweep
+       n8nWebhookSecret  <the same value as the Header Auth credential in n8n>
+
+   The header NAME is not a secret — it is just which header to send — so it
+   stays here. Set neither property and nothing is called; the sweep runs and
+   does nothing. */
+var N8N_WEBHOOK_URL_PROP    = 'n8nWebhookUrl';
+var N8N_WEBHOOK_SECRET_PROP = 'n8nWebhookSecret';
+var N8N_WEBHOOK_HEADER      = 'x-autopost-key';   // must match the Header Auth credential in n8n
+
+/** The webhook URL and secret, read fresh from Script Properties. */
+function n8nWebhook() {
+  var props = PropertiesService.getScriptProperties();
+  return {
+    url:    props.getProperty(N8N_WEBHOOK_URL_PROP) || '',
+    secret: props.getProperty(N8N_WEBHOOK_SECRET_PROP) || ''
+  };
+}
 
 /* Two things can ask n8n to run: the minute sweep, and approving a post that
    is already due. Without a gap between calls both could fire at once and two
@@ -154,7 +174,7 @@ var MAX_UPLOAD_MB = 20;
 /* Bump this whenever you change this file. Opening the /exec URL in a browser
    shows the version that is actually LIVE — which is the deployed one, not the
    one in the editor. If it doesn't match, the deployment wasn't updated. */
-var VERSION = '13-webhook';
+var VERSION = '14-secret-out-of-repo';
 
 /* Ceiling on a caption edited from the review page. Well above every network's
    own limit (Facebook's 63,206 is the largest) but far below the 50,000-char
@@ -359,7 +379,7 @@ function sweepStatus() {
   var due = dueRows();
   Logger.log([
     'trigger installed : ' + installed,
-    'webhook configured: ' + !!(N8N_WEBHOOK_URL && N8N_WEBHOOK_SECRET),
+    'webhook configured: ' + !!(n8nWebhook().url && n8nWebhook().secret),
     'last sweep        : ' + (PropertiesService.getScriptProperties().getProperty('lastSweepAt') || 'never'),
     'due right now     : ' + (due.length ? due.join(', ') : 'nothing')
   ].join('\n'));
@@ -427,17 +447,20 @@ function dueRows() {
  * a second run reading the same unclaimed rows would publish them twice.
  */
 function pingN8n(reason, rows) {
-  if (!N8N_WEBHOOK_URL || !N8N_WEBHOOK_SECRET) return 'n8n webhook is not configured.';
+  var hook = n8nWebhook();
+  if (!hook.url || !hook.secret) {
+    return 'n8n webhook is not configured — add n8nWebhookUrl and n8nWebhookSecret to Script Properties.';
+  }
 
   var cache = CacheService.getScriptCache();
   if (cache.get('n8nPing')) return 'skipped — n8n was called moments ago.';
   cache.put('n8nPing', '1', PING_DEBOUNCE_SECONDS);
 
   var headers = {};
-  headers[N8N_WEBHOOK_HEADER] = N8N_WEBHOOK_SECRET;
+  headers[N8N_WEBHOOK_HEADER] = hook.secret;
 
   try {
-    var res = UrlFetchApp.fetch(N8N_WEBHOOK_URL, {
+    var res = UrlFetchApp.fetch(hook.url, {
       method: 'post',
       contentType: 'application/json',
       headers: headers,
@@ -1213,7 +1236,7 @@ function doGet() {
     /* This script is now the only thing that starts a publish, so a stopped
        trigger is silent. If `lastSweep` is not within the last few minutes,
        nothing is publishing — run installSweep() from the editor. */
-    webhook: !!(N8N_WEBHOOK_URL && N8N_WEBHOOK_SECRET),
+    webhook: !!(n8nWebhook().url && n8nWebhook().secret),
     lastSweep: PropertiesService.getScriptProperties().getProperty('lastSweepAt') || null,
     uploads: true,
     ready: true
