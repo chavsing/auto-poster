@@ -623,6 +623,10 @@
     { id:'youtube',  name:'YouTube',    limit:5000,  color:'#FF0000', path:'M23 12s0-3.5-.4-5.2a2.9 2.9 0 0 0-2-2C18.7 4.3 12 4.3 12 4.3s-6.7 0-8.6.5a2.9 2.9 0 0 0-2 2C1 8.5 1 12 1 12s0 3.5.4 5.2c.2 1 1 1.7 2 2 1.9.5 8.6.5 8.6.5s6.7 0 8.6-.5a2.9 2.9 0 0 0 2-2C23 15.5 23 12 23 12zM9.8 15.4V8.6l5.8 3.4-5.8 3.4z' }
   ];
   var MEDIA_LIMITS = { facebook:30, instagram:10, twitter:4, linkedin:10, youtube:1 };
+  /* Where one post can carry images AND video — per Blotato's media docs, only
+     Instagram: "Composition: images, videos, or a mix of both". Must match
+     index.html. */
+  var MIXED_MEDIA_OK = { instagram:true };
   var MAX_MEDIA = 10;
   var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
   /* Per post, across every uploaded file. Uploads travel base64-encoded, which
@@ -1195,15 +1199,30 @@
     return '<span class="hint">' + len.toLocaleString() + ' characters</span>';
   }
 
-  /* Media count is a per-network ceiling: over it, that network is skipped
-     rather than trimmed, so say which ones before it happens. */
+  /* Two ways a media set gets a platform skipped rather than trimmed: too many
+     items, or video mixed with images somewhere that cannot take both. Say
+     which platforms before it happens, not after in the result column. */
   function mediaWarn(){
     var n = draft.media.length;
+    var out = [];
+
     var over = draft.platforms.filter(function(id){ return n > (MEDIA_LIMITS[id] || 99); });
-    if(!over.length) return '';
-    return '<p class="note warn">' + n + ' items is over the limit for ' +
-      esc(over.map(function(id){ return meta(id).name + ' (' + MEDIA_LIMITS[id] + ')'; }).join(', ')) +
-      ' — those will be skipped, the rest still publish.</p>';
+    if(over.length){
+      out.push(n + ' items is over the limit for ' +
+        esc(over.map(function(id){ return meta(id).name + ' (' + MEDIA_LIMITS[id] + ')'; }).join(', ')) + '.');
+    }
+
+    var hasVideo = draft.media.some(function(m){ return /^video\//.test(m.mimeType); });
+    if(hasVideo && n > 1){
+      var noMix = draft.platforms.filter(function(id){ return !MIXED_MEDIA_OK[id]; });
+      if(noMix.length){
+        out.push('Only Instagram carousels take video and images together — ' +
+          esc(noMix.map(function(id){ return meta(id).name; }).join(', ')) + ' cannot.');
+      }
+    }
+
+    if(!out.length) return '';
+    return '<p class="note warn">' + out.join(' ') + ' Those are skipped; the rest still publish.</p>';
   }
 
   /* ==================================================================

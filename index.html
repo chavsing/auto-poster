@@ -925,6 +925,11 @@
      platform rather than trimming — a trimmed carousel is a different post
      from the one you composed. */
   var MEDIA_LIMITS = { facebook:30, instagram:10, twitter:4, linkedin:10, youtube:1 };
+  /* Where one post can carry images AND video. Per Blotato's media docs only
+     Instagram can: "Composition: images, videos, or a mix of both". Facebook
+     publishes video as a Reel, X takes 4 photos OR one video. (Carousel *ads*
+     do allow mixing — that is a different, paid product, not what we post.) */
+  var MIXED_MEDIA_OK = { instagram:true };
 
   var mode = 'link';        // which widget adds to the list
   var ratioId = 'orig';
@@ -1003,20 +1008,33 @@
     var n = media.length;
     if(!n){
       note.textContent = '';
-    } else if(hasVideo() && n > 1){
-      note.textContent = 'Video cannot be mixed into a carousel — keep one video on its own.';
-      note.classList.add('warn');
     } else {
-      var over = selected().filter(function(p){ return n > (MEDIA_LIMITS[p] || 99); });
-      var msg = n + ' of ' + MAX_MEDIA + (n > 1 ? ' — posts as a carousel, item 1 is the cover.' : '.');
-      if(over.length){
-        note.textContent = msg + ' ' + over.map(function(p){
-          return meta(p).name + ' allows ' + MEDIA_LIMITS[p];
-        }).join(', ') + ' — those will be skipped.';
-        note.classList.add('warn');
-      } else {
-        note.textContent = msg;
+      var sel = selected();
+      var warnings = [];
+
+      /* Instagram carousels take "images, videos, or a mix of both". Nowhere
+         else does: Facebook publishes video as a Reel, X takes 4 photos OR one
+         video. So this depends on which channels are ticked, not on the files. */
+      if(hasVideo() && n > 1){
+        var noMix = sel.filter(function(p){ return !MIXED_MEDIA_OK[p]; });
+        if(noMix.length){
+          warnings.push('Only Instagram carousels take video and images together — ' +
+            noMix.map(function(p){ return meta(p).name; }).join(', ') +
+            (noMix.length > 1 ? ' will skip this.' : ' will skip this.'));
+        }
       }
+
+      var over = sel.filter(function(p){ return n > (MEDIA_LIMITS[p] || 99); });
+      if(over.length){
+        warnings.push(over.map(function(p){
+          return meta(p).name + ' allows ' + MEDIA_LIMITS[p];
+        }).join(', ') + ' — those will be skipped.');
+      }
+
+      note.textContent = n + ' of ' + MAX_MEDIA +
+        (n > 1 ? ' — posts as a carousel, item 1 is the cover.' : '.') +
+        (warnings.length ? ' ' + warnings.join(' ') : '');
+      note.classList.toggle('warn', warnings.length > 0);
     }
     renderRatios();
     renderPreview();
