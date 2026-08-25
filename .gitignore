@@ -7,3 +7,6 @@
 Thumbs.db
 
 .vercel
+
+# Credentials and account notes. NEVER commit these — this repo is public.
+ACCOUNTS.md

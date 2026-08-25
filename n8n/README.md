@@ -1,19 +1,30 @@
 # AutoPost — n8n backend
 
+> **Read [../README.md](../README.md) first.** That is the handover doc — the accounts, the
+> secrets, and how the whole thing fits together. This file is the per-node detail of the
+> workflows only.
+>
+> **What changed since most of this was written:** the workflow no longer has a Schedule
+> Trigger. Apps Script decides when a post is due and calls a **webhook** — n8n counts an
+> execution every time a Schedule Trigger fires, and once a minute is ~43,800 a month
+> against a 2,500 plan. Sections below that describe an every-minute sweep still describe
+> the *logic* correctly; only what starts it moved. There is also a sign-in (Supabase) and
+> a separate review page now, both covered in the root README.
+
 The frontend ([index.html](../index.html)) and Apps Script ([AppsScript.gs](../AppsScript.gs)) only
 write a row to the Google Sheet. These workflows are the half that publishes it.
 
 | File | What it is |
 |---|---|
-| `autopost-workflow.json` | **v1** — Facebook only, via the Blotato node. 20 nodes. |
-| `autopost-workflow-all-platforms.json` | **v2** — all five platforms the form offers, via the Blotato node. 32 nodes. |
+| `autopost-workflow.json` | **v1** — Facebook only, via the Blotato node. 23 nodes. |
+| `autopost-workflow-all-platforms.json` | **v2** — all five platforms the form offers, via the Blotato node. 35 nodes. |
 | `autopost-workflow-direct-apis.json` | Pre-Blotato version: each platform hitting its own API directly (Meta app, X developer account, etc.). Kept for reference. |
 
 v1 and v2 are independent — import whichever you want, or both. **Don't activate both at
-once:** they sweep the same sheet on the same `Status = new` filter and would race for rows.
+once:** they read the same sheet on the same filter and would race for rows.
 
 ```
-index.html ──POST──▶ Apps Script ──append──▶ Google Sheet (Status: new)
+index.html ──POST──▶ Apps Script ──append──▶ Google Sheet (status: For review)
                                                     │
                                      ┌──────────────┴───────────────┐
                                      │            n8n               │
@@ -145,7 +156,7 @@ never runs.
 
 ### 5. Activate
 
-The **Every minute** trigger sweeps the sheet.
+The **webhook trigger** runs the workflow. Apps Script calls it — see the root README.
 
 There is deliberately **no webhook**. The page and Apps Script never call n8n; n8n polls the
 sheet and decides everything. That keeps the three parts independent — the form works
@@ -182,7 +193,7 @@ Get new rows (post status = queued)      ← published rows never even reach n8n
 
 **A row that isn't due yet is left completely alone** — nothing written back at all. It
 keeps `post status: queued` and gets re-checked on the next sweep. That's the whole
-mechanism, and it's why the sweep runs every minute.
+mechanism. The sweep itself now lives in Apps Script, not here.
 
 **The read is filtered on `post status = queued`, not on `status`.** That matters for
 scale: `status` stays on `Publish` forever after a post goes out, so filtering on it would
@@ -198,7 +209,7 @@ that cell and the next sweep picks them up.
 Consequences worth knowing:
 
 - **You can reschedule or cancel from the sheet.** Change `Post At` before it fires and the
-  new time is what counts. Change `Status` away from `new` and it never fires.
+  new time is what counts. Change `status` away from `Publish` and it never fires.
 - **A missed window still publishes.** If n8n is down at the scheduled minute, the row goes
   out on the first sweep after it comes back, not never.
 - **Blank `Post At` publishes on the next sweep.** The form always fills it, so this only
@@ -293,7 +304,7 @@ change your mind — either way n8n stops considering it.
   first sweep at or after its time, so expect up to ~60 s of lag.
 - **Untested against live credentials.** Node type, parameter names, per-platform required
   fields, and response shapes were read from the published package
-  (`@blotato/n8n-nodes-blotato@1.0.10`) rather than guessed. The graph validates — 32 nodes,
+  (`@blotato/n8n-nodes-blotato@1.0.10`) rather than guessed. The graph validates — 35 nodes,
   no dangling connections, both Merge nodes fully wired, every expression parses, and the
   schedule gate was exercised against past/future/offset/blank/serial/garbage values — but I
   have no Blotato key here, so treat your first run as a smoke test.
